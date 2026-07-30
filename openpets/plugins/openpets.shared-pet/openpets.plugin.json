@@ -1,0 +1,55 @@
+{
+  "manifestVersion": 3,
+  "id": "openpets.shared-pet",
+  "name": "$t:plugin.name",
+  "description": "$t:plugin.description",
+  "version": "0.1.0",
+  "runtime": "javascript",
+  "icon": "heart",
+  "sdkVersion": "3.0.0",
+  "entry": "index.js",
+  "permissions": [
+    "pet:speak",
+    "pet:interact",
+    "pet:pin",
+    "pet:reaction",
+    "schedule",
+    "storage",
+    "secrets",
+    "commands",
+    "events",
+    "network",
+    "network:write",
+    "network:local",
+    "status"
+  ],
+  "network": {
+    "hosts": ["127.0.0.1:4317", "shared-pet.example.com"]
+  },
+  "configSchema": {
+    "serverUrl": {
+      "type": "text",
+      "default": "http://127.0.0.1:4317",
+      "label": "$t:config.serverUrl.label",
+      "description": "$t:config.serverUrl.description"
+    },
+    "nickname": {
+      "type": "text",
+      "default": "",
+      "label": "$t:config.nickname.label",
+      "description": "$t:config.nickname.description"
+    },
+    "inviteCode": {
+      "type": "text",
+      "default": "",
+      "label": "$t:config.inviteCode.label",
+      "description": "$t:config.inviteCode.description"
+    },
+    "showStats": {
+      "type": "boolean",
+      "default": true,
+      "label": "$t:config.showStats.label",
+      "description": "$t:config.showStats.description"
+    }
+  }
+}

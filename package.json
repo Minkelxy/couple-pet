@@ -1,0 +1,14 @@
+{
+  "name": "openpets-shared-pet-overlay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "基于 OpenPets SDK v3 的双人共享桌宠插件、宠物包与同步服务",
+  "type": "module",
+  "scripts": {
+    "server": "node apps/server/index.js",
+    "test": "node --test apps/server/domain.test.js apps/server/http.integration.test.js openpets/plugins/openpets.shared-pet/test.js",
+    "check": "node --check openpets/plugins/openpets.shared-pet/index.js && node --check apps/server/index.js",
+    "prepare:openpets": "node scripts/prepare-openpets.mjs"
+  },
+  "engines": { "node": ">=20" }
+}

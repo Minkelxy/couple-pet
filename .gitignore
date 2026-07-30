@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+vendor/
+data/
+dist/
+img/
+*.log
+
+# Generated pet-art intermediates and local revision backups.
+openpets/pets/tuan-tuan/action-source-v2*
+openpets/pets/tuan-tuan/action-source-v3-a.png
+openpets/pets/tuan-tuan/action-source-v3-b.png
+openpets/pets/tuan-tuan/action-source-v3-c.png
+openpets/pets/tuan-tuan/spritesheet-v*.webp

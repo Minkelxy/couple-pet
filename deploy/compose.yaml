@@ -1,0 +1,33 @@
+services:
+  shared-pet:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - shared-pet-data:/data
+    networks: [pet-internal]
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on: [shared-pet]
+    environment:
+      PET_DOMAIN: ${PET_DOMAIN:?set PET_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [pet-internal]
+
+networks:
+  pet-internal:
+
+volumes:
+  shared-pet-data:
+  caddy-data:
+  caddy-config:

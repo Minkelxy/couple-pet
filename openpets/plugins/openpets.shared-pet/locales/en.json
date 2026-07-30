@@ -1,0 +1,21 @@
+{
+  "plugin": {
+    "name": "Shared Pet",
+    "description": "Raise one OpenPets companion together across two computers."
+  },
+  "config": {
+    "serverUrl": { "label": "Sync server", "description": "Must match a host declared in the plugin manifest." },
+    "nickname": { "label": "Your nickname", "description": "Shown only to your paired partner." },
+    "inviteCode": { "label": "Partner invite code", "description": "Leave empty on the first computer to create a room." },
+    "showStats": { "label": "Show shared status", "description": "Pins mood, energy, fullness and bond beside the pet." }
+  },
+  "command": {
+    "connect": "Create / connect shared room",
+    "connectDescription": "Create a room when invite code is empty, otherwise join it.",
+    "message": "Send a pet message",
+    "gift": "Send a small gift",
+    "history": "Recent shared interactions",
+    "invite": "Show partner invite code"
+  },
+  "form": { "message": "Message (up to 100 characters)", "gift": "Gift", "send": "Send with pet" }
+}
