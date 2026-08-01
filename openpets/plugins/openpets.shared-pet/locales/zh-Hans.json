@@ -16,6 +16,8 @@
     "gift": "送一份小礼物",
     "history": "查看最近互动",
     "invite": "再次显示搭档邀请码",
+    "guide": "首次使用指南",
+    "guideDescription": "查看当前还需要完成的配对步骤。",
     "diagnose": "检查连接与配置",
     "diagnoseDescription": "检查昵称、同步服务地址和当前连接状态。"
   },

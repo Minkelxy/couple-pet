@@ -5,13 +5,22 @@ const SNAPSHOT_KEY = "snapshot";
 const IDENTITY_KEY = "identity";
 const PARTNER_INVITE_KEY = "partnerInvite";
 const TOKEN_KEY = "deviceToken";
+const SETUP_GUIDE_SEEN_KEY = "setupGuideSeen";
+export const CARE_COOLDOWN_MS = 3000;
 const CARE_LABELS = { feed: "喂食", pet: "抚摸", play: "玩耍", rest: "休息" };
+export const CARE_PRESENTATIONS = {
+  feed: { reaction: "success", text: "开饭啦！", icon: "food", tone: "success" },
+  pet: { reaction: "waving", text: "呼噜呼噜～", icon: "heart", tone: "info" },
+  play: { reaction: "celebrating", text: "来追我呀！", icon: "sparkles", tone: "success" },
+  rest: { reaction: "waiting", text: "我先眯一会儿…", icon: "moon", tone: "info" }
+};
 const GIFTS = ["毛线球", "小鱼干", "纸箱", "逗猫棒", "铃铛", "猫薄荷", "蝴蝶结", "软垫"];
 const pinned = new WeakMap();
 const running = new WeakSet();
 const lastClickFeedback = new WeakMap();
 const lastClickSubmit = new WeakMap();
 const lastSetupHint = new WeakMap();
+const lastCareSubmit = new WeakMap();
 
 const eventId = () => `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
 const parse = (response) => response.json ?? JSON.parse(response.text || "{}");
@@ -30,6 +39,21 @@ export function normalizeQueue(value) {
   return Array.isArray(value)
     ? value.filter((item) => item && typeof item.id === "string" && typeof item.type === "string").slice(-100)
     : [];
+}
+
+export function setupGuideText(config, connected = false) {
+  if (connected) return "已经连接共享房间。右键团团，就可以照顾、传话和送礼物啦。";
+  const nickname = String(config?.nickname || "").trim();
+  const inviteCode = String(config?.inviteCode || "").trim();
+  if (!nickname) {
+    return "一起养团团只差两步：\n1. 在 OpenPets 的插件设置里填写你的昵称\n2. 回到团团，右键选择“创建 / 连接共享房间”";
+  }
+  if (inviteCode) return "昵称和搭档邀请码已经填好。右键团团，选择“创建 / 连接共享房间”即可加入。";
+  return "昵称已经填好。第一台电脑把邀请码留空，右键团团选择“创建 / 连接共享房间”；创建后把团团说出的搭档邀请码发给对方。";
+}
+
+export function careCooldownRemaining(lastAt, now = Date.now()) {
+  return Math.max(0, CARE_COOLDOWN_MS - (now - Number(lastAt || 0)));
 }
 
 async function request(ctx, path, options = {}, token = null) {
@@ -92,7 +116,11 @@ export async function updateHud(ctx, state) {
 export async function connect(ctx) {
   const cfg = await ctx.config.get();
   const nickname = String(cfg.nickname || "").trim();
-  if (!nickname) throw new Error("请先在插件设置中填写昵称。");
+  if (!nickname) {
+    await setStatus(ctx, "setup");
+    await showSetupGuide(ctx);
+    return null;
+  }
   let inviteCode = String(cfg.inviteCode || "").trim();
   let partnerCode = "";
   if (!inviteCode) {
@@ -118,7 +146,11 @@ export async function connect(ctx) {
 }
 
 export async function enqueue(ctx, type, payload) {
-  if (!await token(ctx)) throw new Error("请先创建或连接共享房间，再进行这项操作。");
+  if (!await token(ctx)) {
+    await setStatus(ctx, "setup");
+    await showSetupGuide(ctx);
+    return null;
+  }
   const queue = normalizeQueue(await ctx.storage.get(QUEUE_KEY));
   queue.push({ id: eventId(), type, payload, createdAt: Date.now() });
   await ctx.storage.set(QUEUE_KEY, queue);
@@ -202,14 +234,31 @@ async function presentPartnerEvents(ctx, events) {
   }
   const latestCare = events.filter((event) => event.type === "CARE").at(-1);
   if (latestCare) {
-    await ctx.pet.react(latestCare.payload.action === "rest" ? "waiting" : "celebrating", { showMessage: false });
+    const presentation = CARE_PRESENTATIONS[latestCare.payload.action];
+    await ctx.pet.react(presentation?.reaction || "celebrating", { showMessage: false });
   }
 }
 
-async function care(ctx, action) {
-  if (!await token(ctx)) throw new Error("请先创建或连接共享房间，再照顾团团。");
-  await ctx.pet.react(action === "rest" ? "waiting" : action === "pet" ? "waving" : "celebrating", { showMessage: false });
-  await ctx.pet.speak({ feed: "开饭啦！", pet: "呼噜呼噜～", play: "来追我呀！", rest: "我先眯一会儿…" }[action]);
+async function care(ctx, action, now = Date.now()) {
+  if (!await token(ctx)) {
+    await setStatus(ctx, "setup");
+    await showSetupGuide(ctx);
+    return null;
+  }
+  const submitted = lastCareSubmit.get(ctx) || {};
+  const remaining = careCooldownRemaining(submitted[action], now);
+  if (remaining > 0) {
+    try { await ctx.pet.speak({ text: "慢一点，让团团喘口气～", tone: "info", durationMs: Math.min(remaining, 3000) }); } catch {}
+    return null;
+  }
+  lastCareSubmit.set(ctx, { ...submitted, [action]: now });
+  const presentation = CARE_PRESENTATIONS[action];
+  try {
+    await ctx.pet.react(presentation.reaction, { showMessage: false });
+    await ctx.pet.speak({ text: presentation.text, icon: presentation.icon, tone: presentation.tone, durationMs: 3500 });
+  } catch {
+    try { await ctx.log.warn("Care feedback unavailable.", { action }); } catch {}
+  }
   return enqueue(ctx, "CARE", { action });
 }
 
@@ -228,8 +277,22 @@ async function handlePetClick(ctx, now = Date.now()) {
   }
   if (now - (lastClickSubmit.get(ctx) || 0) < 3000) return null;
   lastClickSubmit.set(ctx, now);
-  await ctx.pet.speak("呼噜呼噜～");
-  return enqueue(ctx, "CARE", { action: "pet" });
+  return care(ctx, "pet", now);
+}
+
+async function showSetupGuide(ctx, automatic = false) {
+  const cfg = await ctx.config.get();
+  const connected = Boolean(await token(ctx));
+  const text = setupGuideText(cfg, connected);
+  await ctx.ui.bubble({
+    markdown: text,
+    tone: connected ? "success" : "info",
+    sticky: !automatic,
+    durationMs: automatic ? 14_000 : undefined,
+    dismissOn: automatic ? ["timeout", "click", "petClick"] : ["click", "petClick"]
+  });
+  if (automatic) await ctx.storage.set(SETUP_GUIDE_SEEN_KEY, true);
+  return text;
 }
 
 async function showInvite(ctx) {
@@ -261,7 +324,11 @@ async function diagnose(ctx) {
 
 async function showHistory(ctx) {
   const deviceToken = await token(ctx);
-  if (!deviceToken) throw new Error("请先连接共享房间。");
+  if (!deviceToken) {
+    await setStatus(ctx, "setup");
+    await showSetupGuide(ctx);
+    return null;
+  }
   const cursor = Number(await ctx.storage.get(CURSOR_KEY) || 0);
   const feed = await request(ctx, `/events?after=${Math.max(0, cursor - 50)}`, {}, deviceToken);
   const lines = (feed.events || []).slice(-8).reverse().map((event) => {
@@ -304,6 +371,7 @@ export function register(OpenPetsPlugin) {
       }, (values) => enqueue(ctx, "GIFT", { gift: String(values?.gift || "") }));
       await ctx.commands.register({ id: "history", title: "$t:command.history" }, () => showHistory(ctx));
       await ctx.commands.register({ id: "invite", title: "$t:command.invite" }, () => showInvite(ctx));
+      await ctx.commands.register({ id: "guide", title: "$t:command.guide", description: "$t:command.guideDescription" }, () => showSetupGuide(ctx));
       await ctx.commands.register({ id: "diagnose", title: "$t:command.diagnose", description: "$t:command.diagnoseDescription" }, () => diagnose(ctx));
       try {
         ctx.events.on("pet:clicked", async () => {
@@ -313,7 +381,13 @@ export function register(OpenPetsPlugin) {
       const snapshot = await ctx.storage.get(SNAPSHOT_KEY);
       if (snapshot) await updateHud(ctx, snapshot);
       if (await token(ctx)) await sync(ctx);
-      else await setStatus(ctx, "setup");
+      else {
+        await setStatus(ctx, "setup");
+        if (!await ctx.storage.get(SETUP_GUIDE_SEEN_KEY)) {
+          try { await showSetupGuide(ctx, true); }
+          catch { try { await ctx.log.warn("First-time setup guide unavailable."); } catch {} }
+        }
+      }
       await scheduleNextSync(ctx);
     },
     async stop(ctx) {

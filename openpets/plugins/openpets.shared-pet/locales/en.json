@@ -16,6 +16,8 @@
     "gift": "Send a small gift",
     "history": "Recent shared interactions",
     "invite": "Show partner invite code",
+    "guide": "First-time setup guide",
+    "guideDescription": "Show the remaining pairing steps for this computer.",
     "diagnose": "Check connection and setup",
     "diagnoseDescription": "Check nickname, sync server address, and connection status."
   },
