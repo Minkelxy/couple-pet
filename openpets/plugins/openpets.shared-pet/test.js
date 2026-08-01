@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { normalizeQueue, normalizeUrl, register, sync, POLL_ID } from "./index.js";
+import {
+  CARE_COOLDOWN_MS,
+  CARE_PRESENTATIONS,
+  careCooldownRemaining,
+  normalizeQueue,
+  normalizeUrl,
+  register,
+  setupGuideText,
+  sync,
+  POLL_ID
+} from "./index.js";
 
 test("offline queue keeps valid events and stays bounded", () => {
   const input = Array.from({ length: 120 }, (_, index) => ({ id: `evt_${index}`, type: "CARE" }));
@@ -21,6 +31,24 @@ test("server URL accepts HTTP(S) bases and rejects unsafe forms", () => {
   assert.throws(() => normalizeUrl("shared-pet.example.com"), /地址无效/);
   assert.throws(() => normalizeUrl("https://user:pass@example.com"), /地址无效/);
   assert.throws(() => normalizeUrl("https://example.com?token=secret"), /地址无效/);
+});
+
+test("setup guide advances with nickname, invite, and connection state", () => {
+  assert.match(setupGuideText({ nickname: "", inviteCode: "" }), /填写你的昵称/);
+  assert.match(setupGuideText({ nickname: "小雨", inviteCode: "" }), /第一台电脑.*邀请码留空/);
+  assert.match(setupGuideText({ nickname: "小雨", inviteCode: "PET-ABCD" }), /已经填好.*加入/);
+  assert.match(setupGuideText({}, true), /已经连接共享房间/);
+});
+
+test("care presentations are distinct and use the server's three-second cooldown", () => {
+  assert.equal(CARE_COOLDOWN_MS, 3000);
+  assert.equal(careCooldownRemaining(1000, 2500), 1500);
+  assert.equal(careCooldownRemaining(1000, 4000), 0);
+  assert.deepEqual(Object.keys(CARE_PRESENTATIONS), ["feed", "pet", "play", "rest"]);
+  assert.equal(new Set(Object.values(CARE_PRESENTATIONS).map((item) => item.text)).size, 4);
+  assert.ok(Object.values(CARE_PRESENTATIONS).every((item) => ["food", "heart", "sparkles", "moon"].includes(item.icon)));
+  assert.equal(CARE_PRESENTATIONS.pet.reaction, "waving");
+  assert.equal(CARE_PRESENTATIONS.rest.reaction, "waiting");
 });
 
 let createTestHarness;
@@ -47,16 +75,22 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   assert.ok(h.calls.commands.has("connect"));
   assert.ok(h.calls.commands.has("message"));
   assert.ok(h.calls.commands.has("gift"));
+  assert.ok(h.calls.commands.has("guide"));
   assert.ok(h.calls.commands.has("diagnose"));
   assert.ok(h.calls.schedules.has(POLL_ID));
   assert.match(h.calls.status.at(-1)?.text || "", /待配置/);
+  assert.ok(h.calls.bubbles.some((bubble) => bubble.spec.markdown?.includes("昵称")), "first start should explain setup in the pet UI");
+  assert.equal(h.calls.storage.get("setupGuideSeen"), true);
   await h.emit("pet:clicked", {});
   assert.ok(h.calls.react.includes("waving"));
   assert.match(h.calls.speak.at(-1) || "", /插件设置/);
   assert.equal(h.calls.storage.has("offlineQueue"), false, "unpaired clicks must not enter the offline queue");
   assert.equal(h.calls.netCalls.length, 0, "unpaired clicks must not call the server");
-  await assert.rejects(() => h.runCommand("message", { text: "hello" }), /连接共享房间/);
+  await h.runCommand("message", { text: "hello" });
   assert.equal(h.calls.storage.has("offlineQueue"), false, "unpaired messages must not enter the offline queue");
+  assert.ok(h.calls.bubbles.at(-1)?.spec.markdown?.includes("共享房间"), "unpaired commands should guide instead of failing");
+  await h.runCommand("feed");
+  assert.equal(h.calls.storage.has("offlineQueue"), false, "unpaired care must not enter the offline queue");
   h.net.mock("http://127.0.0.1:4317/health", { json: { ok: true } });
   await h.runCommand("diagnose");
   h.expectNetCall("/health");
@@ -95,6 +129,36 @@ test("offline recovery presents every partner message before advancing the curso
   await sync(h.ctx);
   assert.ok(h.calls.bubbles.some((bubble) => bubble.spec.text?.includes("第一条") && bubble.spec.text?.includes("第二条")));
   assert.equal(h.calls.storage.get("eventCursor"), 3);
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("care command applies local cooldown before a second server submission", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "小雨", inviteCode: "", showStats: true }
+  });
+  await h.start();
+  await h.ctx.secrets.set("deviceToken", "token-a");
+  const state = {
+    roomId: "room-1", name: "团团", stage: "初次相识", revision: 1,
+    stats: { mood: 74, energy: 76, fullness: 86, intimacy: 0 }, users: [], gifts: []
+  };
+  h.net.mock("http://127.0.0.1:4317/events", {
+    status: 201,
+    json: { duplicate: false, event: { id: "event-feed", type: "CARE", payload: { action: "feed" } }, state }
+  });
+  await h.runCommand("feed");
+  await h.runCommand("feed");
+  assert.equal(h.calls.netCalls.filter((call) => call.url.endsWith("/events")).length, 1);
+  assert.ok(h.calls.react.includes("success"));
+  assert.match(h.calls.speak.at(-1) || "", /慢一点/);
   h.expectNoErrors();
   await h.stop();
 });
