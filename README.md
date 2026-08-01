@@ -58,10 +58,10 @@ OpenPets 负责透明窗口、置顶、拖动、鼠标穿透、托盘、多显�
 
 ```powershell
 git clone https://github.com/alvinunreal/openpets.git vendor/openpets
-node scripts/prepare-openpets.mjs vendor/openpets
 cd vendor/openpets
 pnpm install
-pnpm dev:desktop:plugins
+cd ../..
+npm run dev:openpets
 ```
 
 本仓库已准备好依赖后，也可以在项目根目录一键启动：
@@ -70,7 +70,7 @@ pnpm dev:desktop:plugins
 npm run dev:openpets
 ```
 
-只启动、不重新同步宠物包时使用 `npm run start:openpets`。运行日志按启动会话写入 `data/openpets.stdout.log` 和 `data/openpets.stderr.log`，主进程不会再向已经关闭的终端管道写日志。
+只启动、不重新同步宠物包时使用 `npm run start:openpets`。不要再运行 OpenPets 的 `dev:desktop:plugins` 全插件开发命令，它会监听与本项目无关的官方插件。运行日志按启动会话写入 `data/openpets.stdout.log` 和 `data/openpets.stderr.log`，主进程不会再向已经关闭的终端管道写日志。
 
 启动器通过 OpenPets 官方的 `OPENPETS_DEV_PLUGIN_PATHS` 直接加载 `openpets/plugins/openpets.shared-pet`，不会被当作官方插件发布，也不再通过整目录复制触发多轮热重载。宠物包位于 `vendor/openpets/local-pets/tuan-tuan`，可使用 OpenPets CLI 从文件夹安装。
 
