@@ -12,7 +12,7 @@ const post = async (base, route, value, token) => {
     headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: JSON.stringify(value)
   });
-  return { status: response.status, body: await response.json() };
+  return { status: response.status, body: await response.json(), retryAfter: response.headers.get("retry-after") };
 };
 
 const get = async (base, route, token) => {
@@ -30,6 +30,8 @@ test("HTTP API completes pairing, offline recovery, idempotency and revocation",
     env: { ...process.env, PORT: String(port), PET_DATA_FILE: path.join(temp, "state.json") },
     stdio: ["ignore", "pipe", "pipe"]
   });
+  let auditLog = "";
+  child.stdout.on("data", (chunk) => { auditLog += String(chunk); });
   t.after(async () => {
     child.kill();
     await once(child, "exit");
@@ -93,4 +95,15 @@ test("HTTP API completes pairing, offline recovery, idempotency and revocation",
   assert.equal(revoked.status, 200);
   const afterRevoke = await get(base, "/snapshot", b.body.token);
   assert.equal(afterRevoke.status, 401, "a revoked device token loses access immediately");
+  for (let index = 0; index < 4; index += 1) {
+    assert.equal((await post(base, "/rooms", {})).status, 201);
+  }
+  const rateLimited = await post(base, "/rooms", {});
+  assert.equal(rateLimited.status, 429);
+  assert.ok(Number(rateLimited.retryAfter) > 0, "rate limit responses include Retry-After");
+  assert.match(auditLog, /"action":"room.created"/);
+  assert.match(auditLog, /"action":"event.accepted"/);
+  assert.match(auditLog, /"action":"request.rejected"/);
+  assert.doesNotMatch(auditLog, /今晚早点休息呀|小雨|阿岚/);
+  assert.equal(auditLog.includes(a.body.token), false, "audit logs must not contain device tokens");
 });

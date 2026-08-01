@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "server": "node apps/server/index.js",
-    "test": "node --test apps/server/domain.test.js apps/server/http.integration.test.js openpets/plugins/openpets.shared-pet/test.js scripts/configure-production.test.mjs",
+    "test": "node --test apps/server/domain.test.js apps/server/http-security.test.js apps/server/http.integration.test.js openpets/plugins/openpets.shared-pet/test.js scripts/configure-production.test.mjs",
     "check": "node --check openpets/plugins/openpets.shared-pet/index.js && node --check apps/server/index.js",
     "prepare:openpets": "node scripts/prepare-openpets.mjs",
     "start:openpets": "node scripts/run-openpets-local.mjs",

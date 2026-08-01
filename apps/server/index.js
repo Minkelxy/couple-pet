@@ -2,6 +2,7 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const { PetDomain, initialDb } = require("./domain");
+const { FixedWindowRateLimiter, clientAddress } = require("./http-security");
 
 const port = Number(process.env.PORT || 4317);
 const host = process.env.HOST || "127.0.0.1";
@@ -11,7 +12,15 @@ fs.mkdirSync(path.dirname(dataFile), { recursive: true });
 let db = initialDb();
 try { db = JSON.parse(fs.readFileSync(dataFile, "utf8")); } catch {}
 const domain = new PetDomain(db);
+const limiter = new FixedWindowRateLimiter();
 let saveTimer;
+const audit = (action, fields = {}) => console.log(JSON.stringify({
+  timestamp: new Date().toISOString(),
+  level: "info",
+  component: "shared-pet",
+  action,
+  ...fields
+}));
 const saveNow = () => {
   clearTimeout(saveTimer);
   const temp = `${dataFile}.tmp`;
@@ -35,12 +44,13 @@ const backup = () => {
 };
 setInterval(backup, Number(process.env.PET_BACKUP_INTERVAL_MS || 21_600_000)).unref();
 
-const json = (res, status, body) => {
+const json = (res, status, body, extraHeaders = {}) => {
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "authorization, content-type",
-    "access-control-allow-methods": "GET, POST, OPTIONS"
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    ...extraHeaders
   });
   res.end(JSON.stringify(body));
 };
@@ -60,26 +70,45 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && url.pathname === "/health") return json(res, 200, { ok: true });
     if (req.method === "POST" && url.pathname === "/rooms") {
-      const result = domain.createRoom(); save(); return json(res, 201, result);
+      limiter.assert(`rooms:${clientAddress(req)}`, 5, 15 * 60_000);
+      const result = domain.createRoom(); save();
+      audit("room.created", { roomId: result.roomId });
+      return json(res, 201, result);
     }
     if (req.method === "POST" && url.pathname === "/bind") {
+      limiter.assert(`bind:${clientAddress(req)}`, 20, 15 * 60_000);
       const input = await body(req); const result = domain.bind(input.inviteCode, input.nickname);
-      save(); return json(res, 201, result);
+      save();
+      audit("device.bound", { roomId: result.roomId, deviceId: result.deviceId, userId: result.userId });
+      return json(res, 201, result);
     }
     if (req.method === "GET" && url.pathname === "/snapshot") return json(res, 200, domain.snapshot(auth(req)));
     if (req.method === "GET" && url.pathname === "/events") {
       return json(res, 200, { events: domain.events(auth(req), url.searchParams.get("after")) });
     }
     if (req.method === "POST" && url.pathname === "/events") {
-      const result = domain.submit(auth(req), await body(req)); save(); return json(res, 201, result);
+      const identity = auth(req);
+      const result = domain.submit(identity, await body(req)); save();
+      audit("event.accepted", { roomId: identity.roomId, deviceId: identity.deviceId, type: result.event.type, duplicate: result.duplicate });
+      return json(res, 201, result);
     }
     if (req.method === "POST" && url.pathname === "/revoke") {
-      domain.revoke(auth(req)); save(); return json(res, 200, { ok: true });
+      const identity = auth(req);
+      domain.revoke(identity); save();
+      audit("device.revoked", { roomId: identity.roomId, deviceId: identity.deviceId });
+      return json(res, 200, { ok: true });
     }
     return json(res, 404, { error: "接口不存在" });
   } catch (error) {
     if (error instanceof SyntaxError) error.status = 400;
-    return json(res, error.status || 500, { error: error.status ? error.message : "服务器内部错误" });
+    const status = error.status || 500;
+    audit("request.rejected", { method: req.method, path: url.pathname, status });
+    return json(
+      res,
+      status,
+      { error: error.status ? error.message : "服务器内部错误" },
+      error.retryAfterSec ? { "retry-after": String(error.retryAfterSec) } : {}
+    );
   }
 });
 
