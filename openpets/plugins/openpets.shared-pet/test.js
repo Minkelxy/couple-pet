@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { normalizeQueue, normalizeUrl, register, POLL_ID } from "./index.js";
+import { normalizeQueue, normalizeUrl, register, sync, POLL_ID } from "./index.js";
 
 test("offline queue keeps valid events and stays bounded", () => {
   const input = Array.from({ length: 120 }, (_, index) => ({ id: `evt_${index}`, type: "CARE" }));
@@ -56,6 +56,37 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   assert.equal(h.calls.netCalls.length, 0, "unpaired clicks must not call the server");
   await assert.rejects(() => h.runCommand("message", { text: "hello" }), /连接共享房间/);
   assert.equal(h.calls.storage.has("offlineQueue"), false, "unpaired messages must not enter the offline queue");
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("offline recovery presents every partner message before advancing the cursor", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "小雨", inviteCode: "", showStats: true }
+  });
+  await h.start();
+  await h.ctx.secrets.set("deviceToken", "token-a");
+  await h.ctx.storage.set("identity", { userId: "user-a", deviceId: "device-a" });
+  const state = {
+    roomId: "room-1", name: "团团", stage: "初次相识", revision: 3,
+    stats: { mood: 72, energy: 76, fullness: 70, intimacy: 4 }, users: [], gifts: []
+  };
+  h.net.mock("http://127.0.0.1:4317/snapshot", { json: state });
+  h.net.mock("http://127.0.0.1:4317/events?after=0", { json: { events: [
+    { seq: 1, type: "MESSAGE", actorId: "user-b", actorName: "阿岚", payload: { text: "第一条" } },
+    { seq: 2, type: "MESSAGE", actorId: "user-b", actorName: "阿岚", payload: { text: "第二条" } },
+    { seq: 3, type: "CARE", actorId: "user-a", actorName: "小雨", payload: { action: "pet" } }
+  ] } });
+  await sync(h.ctx);
+  assert.ok(h.calls.bubbles.some((bubble) => bubble.spec.text?.includes("第一条") && bubble.spec.text?.includes("第二条")));
+  assert.equal(h.calls.storage.get("eventCursor"), 3);
   h.expectNoErrors();
   await h.stop();
 });

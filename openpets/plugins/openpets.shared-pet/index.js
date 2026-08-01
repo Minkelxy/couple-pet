@@ -174,17 +174,9 @@ export async function sync(ctx) {
     const events = feed.events || [];
     if (events.length) {
       const identity = await ctx.storage.get(IDENTITY_KEY);
-      const latest = events.filter((event) => event.actorId !== identity?.userId).at(-1);
+      const partnerEvents = events.filter((event) => event.actorId !== identity?.userId);
+      await presentPartnerEvents(ctx, partnerEvents);
       await ctx.storage.set(CURSOR_KEY, Math.max(...events.map((event) => event.seq)));
-      if (latest?.type === "MESSAGE") {
-        await ctx.pet.react("waving", { showMessage: false });
-        await ctx.pet.speak(latest.payload.text);
-      } else if (latest?.type === "GIFT") {
-        await ctx.pet.react("celebrating", { showMessage: false });
-        await ctx.pet.speak(`${latest.actorName}送来了${latest.payload.gift}！`);
-      } else if (latest?.type === "CARE") {
-        await ctx.pet.react(latest.payload.action === "rest" ? "waiting" : "celebrating", { showMessage: false });
-      }
     }
     await setStatus(ctx, "online");
     return state;
@@ -192,6 +184,25 @@ export async function sync(ctx) {
     const queue = normalizeQueue(await ctx.storage.get(QUEUE_KEY));
     await setStatus(ctx, "offline", queue.length);
     return null;
+  }
+}
+
+async function presentPartnerEvents(ctx, events) {
+  if (!events.length) return;
+  const notices = [];
+  for (const event of events) {
+    if (event.type === "MESSAGE") notices.push(`${event.actorName}：${event.payload.text}`);
+    else if (event.type === "GIFT") notices.push(`${event.actorName}送来了${event.payload.gift}！`);
+  }
+  if (notices.length) {
+    const hasMessage = events.some((event) => event.type === "MESSAGE");
+    await ctx.pet.react(hasMessage ? "waving" : "celebrating", { showMessage: false });
+    await ctx.ui.bubble({ text: notices.join("\n"), sticky: notices.length > 1, tone: "info" });
+    return;
+  }
+  const latestCare = events.filter((event) => event.type === "CARE").at(-1);
+  if (latestCare) {
+    await ctx.pet.react(latestCare.payload.action === "rest" ? "waiting" : "celebrating", { showMessage: false });
   }
 }
 
