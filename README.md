@@ -19,7 +19,7 @@ OpenPets 负责透明窗口、置顶、拖动、鼠标穿透、托盘、多显�
 - `openpets/pets/tuan-tuan/`：可由 OpenPets CLI 从文件夹安装的宠物包。
 - `apps/server/`：云端权威状态服务；仅使用 Node.js 内置模块。
 - `scripts/build_spritesheet.py`：把透明猫猫源图生成 OpenPets 固定 192×208、8 列 9 行 spritesheet。
-- `scripts/prepare-openpets.mjs`：把插件和宠物包覆盖到一个 OpenPets 源码 checkout 中。
+- `scripts/prepare-openpets.mjs`：把宠物包同步到 OpenPets 源码 checkout；开发插件由启动器直接加载项目源目录。
 - `img/`：用户提供的真实猫猫日常参考图。
 
 ## 本地端到端运行
@@ -54,7 +54,7 @@ OpenPets 负责透明窗口、置顶、拖动、鼠标穿透、托盘、多显�
 
 ## 在 OpenPets 源码中开发
 
-先取得 OpenPets 源码，然后将本项目扩展复制进去：
+先取得 OpenPets 源码、安装依赖并准备本项目扩展：
 
 ```powershell
 git clone https://github.com/alvinunreal/openpets.git vendor/openpets
@@ -64,7 +64,15 @@ pnpm install
 pnpm dev:desktop:plugins
 ```
 
-覆盖后的插件位于 `vendor/openpets/plugins/dev/openpets.shared-pet`，不会被当作官方插件发布。宠物包位于 `vendor/openpets/local-pets/tuan-tuan`，可使用 OpenPets CLI 从文件夹安装。
+本仓库已准备好依赖后，也可以在项目根目录一键启动：
+
+```powershell
+npm run dev:openpets
+```
+
+只启动、不重新同步宠物包时使用 `npm run start:openpets`。运行日志按启动会话写入 `data/openpets.stdout.log` 和 `data/openpets.stderr.log`，主进程不会再向已经关闭的终端管道写日志。
+
+启动器通过 OpenPets 官方的 `OPENPETS_DEV_PLUGIN_PATHS` 直接加载 `openpets/plugins/openpets.shared-pet`，不会被当作官方插件发布，也不再通过整目录复制触发多轮热重载。宠物包位于 `vendor/openpets/local-pets/tuan-tuan`，可使用 OpenPets CLI 从文件夹安装。
 
 ## 云端部署
 

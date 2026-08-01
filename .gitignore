@@ -4,6 +4,7 @@ vendor/
 data/
 dist/
 img/
+__pycache__/
 *.log
 
 # Generated pet-art intermediates and local revision backups.
