@@ -15,7 +15,9 @@
     "message": "Send a pet message",
     "gift": "Send a small gift",
     "history": "Recent shared interactions",
-    "invite": "Show partner invite code"
+    "invite": "Show partner invite code",
+    "diagnose": "Check connection and setup",
+    "diagnoseDescription": "Check nickname, sync server address, and connection status."
   },
   "form": { "message": "Message (up to 100 characters)", "gift": "Gift", "send": "Send with pet" }
 }

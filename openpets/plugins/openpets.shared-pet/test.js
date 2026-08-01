@@ -47,6 +47,7 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   assert.ok(h.calls.commands.has("connect"));
   assert.ok(h.calls.commands.has("message"));
   assert.ok(h.calls.commands.has("gift"));
+  assert.ok(h.calls.commands.has("diagnose"));
   assert.ok(h.calls.schedules.has(POLL_ID));
   assert.match(h.calls.status.at(-1)?.text || "", /待配置/);
   await h.emit("pet:clicked", {});
@@ -56,6 +57,13 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   assert.equal(h.calls.netCalls.length, 0, "unpaired clicks must not call the server");
   await assert.rejects(() => h.runCommand("message", { text: "hello" }), /连接共享房间/);
   assert.equal(h.calls.storage.has("offlineQueue"), false, "unpaired messages must not enter the offline queue");
+  h.net.mock("http://127.0.0.1:4317/health", { json: { ok: true } });
+  await h.runCommand("diagnose");
+  h.expectNetCall("/health");
+  assert.match(h.calls.speak.at(-1) || "", /连接正常/);
+  await h.setConfig({ serverUrl: "not-a-url", nickname: "小雨", inviteCode: "", showStats: true });
+  await h.runCommand("diagnose");
+  assert.match(h.calls.speak.at(-1) || "", /连接检查失败.*地址无效/);
   h.expectNoErrors();
   await h.stop();
 });

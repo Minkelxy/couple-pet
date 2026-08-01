@@ -237,6 +237,28 @@ async function showInvite(ctx) {
   await ctx.pet.speak(code ? `搭档邀请码：${code}` : "这里没有待使用的邀请码，请在插件设置中填写搭档发来的邀请码。");
 }
 
+async function diagnose(ctx) {
+  const cfg = await ctx.config.get();
+  if (!String(cfg.nickname || "").trim()) {
+    await setStatus(ctx, "setup");
+    await ctx.pet.speak("还差一步：请先在插件设置中填写你的昵称。");
+    return false;
+  }
+  try {
+    const health = await request(ctx, "/health");
+    if (health.ok !== true) throw new Error("服务未返回正常健康状态");
+    const connected = Boolean(await token(ctx));
+    await setStatus(ctx, connected ? "online" : "setup");
+    await ctx.pet.react("success", { showMessage: false });
+    await ctx.pet.speak(connected ? "同步服务和共享房间都连接正常！" : "同步服务连接正常，可以创建或加入共享房间啦！");
+    return true;
+  } catch (error) {
+    await setStatus(ctx, "offline", normalizeQueue(await ctx.storage.get(QUEUE_KEY)).length);
+    await ctx.pet.speak(`连接检查失败：${error instanceof Error ? error.message : "无法访问同步服务"}`);
+    return false;
+  }
+}
+
 async function showHistory(ctx) {
   const deviceToken = await token(ctx);
   if (!deviceToken) throw new Error("请先连接共享房间。");
@@ -282,6 +304,7 @@ export function register(OpenPetsPlugin) {
       }, (values) => enqueue(ctx, "GIFT", { gift: String(values?.gift || "") }));
       await ctx.commands.register({ id: "history", title: "$t:command.history" }, () => showHistory(ctx));
       await ctx.commands.register({ id: "invite", title: "$t:command.invite" }, () => showInvite(ctx));
+      await ctx.commands.register({ id: "diagnose", title: "$t:command.diagnose", description: "$t:command.diagnoseDescription" }, () => diagnose(ctx));
       try {
         ctx.events.on("pet:clicked", async () => {
           try { await handlePetClick(ctx); } catch {}
