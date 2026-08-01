@@ -7,10 +7,11 @@ const PARTNER_INVITE_KEY = "partnerInvite";
 const TOKEN_KEY = "deviceToken";
 const SETUP_GUIDE_SEEN_KEY = "setupGuideSeen";
 const PROFILE_KEY = "localProfile";
+const CARE_ANIMATION_RESET_ID = "shared-pet-care-animation-reset";
 export const CARE_COOLDOWN_MS = 3000;
 const CARE_LABELS = { feed: "喂食", pet: "抚摸", play: "玩耍", rest: "休息" };
 export const CARE_PRESENTATIONS = {
-  feed: { reaction: "success", text: "开饭啦！", icon: "food", tone: "success" },
+  feed: { reaction: "success", sprite: "feed", fps: 5, durationMs: 1800, text: "开饭啦！", icon: "food", tone: "success" },
   pet: { reaction: "waving", text: "呼噜呼噜～", icon: "heart", tone: "info" },
   play: { reaction: "celebrating", text: "来追我呀！", icon: "sparkles", tone: "success" },
   rest: { reaction: "waiting", text: "我先眯一会儿…", icon: "moon", tone: "info" }
@@ -66,6 +67,28 @@ async function setupDefaults(ctx) {
 
 export function careCooldownRemaining(lastAt, now = Date.now()) {
   return Math.max(0, CARE_COOLDOWN_MS - (now - Number(lastAt || 0)));
+}
+
+async function playCareAnimation(ctx, action) {
+  const presentation = CARE_PRESENTATIONS[action];
+  if (!presentation) return;
+  try { await ctx.schedule.cancel(CARE_ANIMATION_RESET_ID); } catch {}
+  if (presentation.sprite) {
+    try {
+      await ctx.pet.setAnimation({
+        sprite: ctx.assets.sprite(presentation.sprite),
+        loop: false,
+        fps: presentation.fps
+      });
+      await ctx.schedule.once(CARE_ANIMATION_RESET_ID, presentation.durationMs, async () => {
+        try { await ctx.pet.setAnimation("idle"); } catch {}
+      });
+      return;
+    } catch {
+      try { await ctx.pet.setAnimation("idle"); } catch {}
+    }
+  }
+  await ctx.pet.react(presentation.reaction, { showMessage: false });
 }
 
 async function request(ctx, path, options = {}, token = null) {
@@ -247,8 +270,7 @@ async function presentPartnerEvents(ctx, events) {
   }
   const latestCare = events.filter((event) => event.type === "CARE").at(-1);
   if (latestCare) {
-    const presentation = CARE_PRESENTATIONS[latestCare.payload.action];
-    await ctx.pet.react(presentation?.reaction || "celebrating", { showMessage: false });
+    await playCareAnimation(ctx, latestCare.payload.action);
   }
 }
 
@@ -267,7 +289,7 @@ async function care(ctx, action, now = Date.now()) {
   lastCareSubmit.set(ctx, { ...submitted, [action]: now });
   const presentation = CARE_PRESENTATIONS[action];
   try {
-    await ctx.pet.react(presentation.reaction, { showMessage: false });
+    await playCareAnimation(ctx, action);
     await ctx.pet.speak({ text: presentation.text, icon: presentation.icon, tone: presentation.tone, durationMs: 3500 });
   } catch {
     try { await ctx.log.warn("Care feedback unavailable.", { action }); } catch {}
@@ -419,6 +441,7 @@ export function register(OpenPetsPlugin) {
     async stop(ctx) {
       running.delete(ctx);
       try { await ctx.schedule.cancel(POLL_ID); } catch {}
+      try { await ctx.schedule.cancel(CARE_ANIMATION_RESET_ID); } catch {}
       const handle = pinned.get(ctx);
       if (handle) { try { await handle.dismiss(); } catch {} }
       pinned.delete(ctx);

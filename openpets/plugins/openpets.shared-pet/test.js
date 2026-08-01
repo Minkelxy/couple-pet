@@ -49,6 +49,23 @@ test("care presentations are distinct and use the server's three-second cooldown
   assert.ok(Object.values(CARE_PRESENTATIONS).every((item) => ["food", "heart", "sparkles", "moon"].includes(item.icon)));
   assert.equal(CARE_PRESENTATIONS.pet.reaction, "waving");
   assert.equal(CARE_PRESENTATIONS.rest.reaction, "waiting");
+  assert.equal(CARE_PRESENTATIONS.feed.sprite, "feed");
+  assert.equal(CARE_PRESENTATIONS.feed.fps, 5);
+});
+
+test("feed sprite uses the square strip contract required by the OpenPets override renderer", async () => {
+  const manifest = JSON.parse(await readFile(new URL("./openpets.plugin.json", import.meta.url), "utf8"));
+  const declaration = manifest.assets.sprites.feed;
+  assert.equal(declaration.frameWidth, declaration.frameHeight);
+  assert.equal(declaration.frames, 8);
+  const bytes = await readFile(new URL(`./${declaration.path}`, import.meta.url));
+  const chunk = bytes.indexOf(Buffer.from("VP8L"));
+  assert.notEqual(chunk, -1, "feed sprite must be a lossless WebP");
+  const dimensions = bytes.readUInt32LE(chunk + 9);
+  const width = (dimensions & 0x3fff) + 1;
+  const height = ((dimensions >>> 14) & 0x3fff) + 1;
+  assert.equal(width, declaration.frameWidth * declaration.frames);
+  assert.equal(height, declaration.frameHeight);
 });
 
 let createTestHarness;
@@ -62,7 +79,7 @@ try {
 
 test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHarness }, async () => {
   const permissions = [
-    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "schedule", "storage",
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
     "secrets", "commands", "events", "network", "network:write", "network:local", "status"
   ];
   const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
@@ -108,7 +125,7 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
 
 test("native connection form creates and binds a room without plugin settings", { skip: !createTestHarness }, async () => {
   const permissions = [
-    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "schedule", "storage",
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
     "secrets", "commands", "events", "network", "network:write", "network:local", "status"
   ];
   const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
@@ -146,7 +163,7 @@ test("native connection form creates and binds a room without plugin settings", 
 
 test("offline recovery presents every partner message before advancing the cursor", { skip: !createTestHarness }, async () => {
   const permissions = [
-    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "schedule", "storage",
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
     "secrets", "commands", "events", "network", "network:write", "network:local", "status"
   ];
   const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
@@ -177,7 +194,7 @@ test("offline recovery presents every partner message before advancing the curso
 
 test("care command applies local cooldown before a second server submission", { skip: !createTestHarness }, async () => {
   const permissions = [
-    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "schedule", "storage",
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "pets:read", "schedule", "storage",
     "secrets", "commands", "events", "network", "network:write", "network:local", "status"
   ];
   const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
@@ -199,7 +216,8 @@ test("care command applies local cooldown before a second server submission", { 
   await h.runCommand("feed");
   await h.runCommand("feed");
   assert.equal(h.calls.netCalls.filter((call) => call.url.endsWith("/events")).length, 1);
-  assert.ok(h.calls.react.includes("success"));
+  assert.equal((await h.ctx.pet.getState()).currentAnimation, "sprite:feed");
+  assert.ok(h.calls.schedules.has("shared-pet-care-animation-reset"));
   assert.match(h.calls.speak.at(-1) || "", /慢一点/);
   h.expectNoErrors();
   await h.stop();

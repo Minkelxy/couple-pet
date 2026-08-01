@@ -3,7 +3,7 @@
   "id": "openpets.shared-pet",
   "name": "$t:plugin.name",
   "description": "$t:plugin.description",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "runtime": "javascript",
   "icon": "heart",
   "sdkVersion": "3.0.0",
@@ -13,6 +13,7 @@
     "pet:interact",
     "pet:pin",
     "pet:reaction",
+    "pet:animate",
     "schedule",
     "storage",
     "secrets",
@@ -25,6 +26,17 @@
   ],
   "network": {
     "hosts": ["127.0.0.1:4317", "shared-pet.example.com"]
+  },
+  "assets": {
+    "sprites": {
+      "feed": {
+        "path": "assets/feed.webp",
+        "frameWidth": 208,
+        "frameHeight": 208,
+        "frames": 8,
+        "durationMs": 1600
+      }
+    }
   },
   "configSchema": {
     "serverUrl": {

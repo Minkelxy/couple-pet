@@ -116,15 +116,15 @@ node --test apps/server/domain.test.js apps/server/http.integration.test.js open
 node --check openpets/plugins/openpets.shared-pet/index.js
 ```
 
-服务端测试覆盖双设备配对、幂等事件、双方参与奖励和私有传话；插件测试覆盖离线队列的过滤与 100 条上限。
+服务端测试覆盖双设备配对、幂等事件、双方参与奖励和私有传话；插件测试同时覆盖离线队列、原生配对表单、照顾冷却与专属进食精灵调度。正式插件目录还会通过 OpenPets 官方校验器检查资源声明、尺寸和文件边界。
 
 ## 生产边界
 
-v0.1 已实现 PRD 的异步共享闭环。生产上线还需要：
+异步共享闭环、服务端防护和 OpenPets 官方 Windows 覆盖层已经完成。生产发布前还需要：
 
 - HTTPS 反向代理与真实域名白名单；
-- API 级 IP/设备限流和结构化审计；
-- Windows 安装包沿用 OpenPets 官方构建与签名链；
-- 正式逐帧精灵图替换当前由真实猫猫插画生成的程序化帧。
+- 在启用 Windows 开发人员模式的构建机上生成并安装 NSIS 包；
+- 使用两台真实 Windows 电脑验收配对、断网恢复和照顾动画节奏；
+- 如需对外分发，再接入发布证书完成安装包签名。
 
 OpenPets 为 MIT 许可项目。本仓库的集成必须保留其上游许可与版权声明。
