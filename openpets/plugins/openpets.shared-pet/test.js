@@ -34,7 +34,7 @@ test("server URL accepts HTTP(S) bases and rejects unsafe forms", () => {
 });
 
 test("setup guide advances with nickname, invite, and connection state", () => {
-  assert.match(setupGuideText({ nickname: "", inviteCode: "" }), /填写你的昵称/);
+  assert.match(setupGuideText({ nickname: "", inviteCode: "" }), /表单里填写昵称/);
   assert.match(setupGuideText({ nickname: "小雨", inviteCode: "" }), /第一台电脑.*邀请码留空/);
   assert.match(setupGuideText({ nickname: "小雨", inviteCode: "PET-ABCD" }), /已经填好.*加入/);
   assert.match(setupGuideText({}, true), /已经连接共享房间/);
@@ -73,6 +73,10 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   });
   await h.start();
   assert.ok(h.calls.commands.has("connect"));
+  const connectForm = h.calls.commands.get("connect")?.meta.form;
+  assert.deepEqual(connectForm?.fields.map((field) => field.id), ["nickname", "inviteCode"]);
+  assert.equal(connectForm?.fields[0]?.default, "小雨");
+  assert.equal(connectForm?.fields[1]?.default, "");
   assert.ok(h.calls.commands.has("message"));
   assert.ok(h.calls.commands.has("gift"));
   assert.ok(h.calls.commands.has("guide"));
@@ -83,7 +87,7 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   assert.equal(h.calls.storage.get("setupGuideSeen"), true);
   await h.emit("pet:clicked", {});
   assert.ok(h.calls.react.includes("waving"));
-  assert.match(h.calls.speak.at(-1) || "", /插件设置/);
+  assert.match(h.calls.speak.at(-1) || "", /创建 \/ 连接共享房间/);
   assert.equal(h.calls.storage.has("offlineQueue"), false, "unpaired clicks must not enter the offline queue");
   assert.equal(h.calls.netCalls.length, 0, "unpaired clicks must not call the server");
   await h.runCommand("message", { text: "hello" });
@@ -98,6 +102,44 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   await h.setConfig({ serverUrl: "not-a-url", nickname: "小雨", inviteCode: "", showStats: true });
   await h.runCommand("diagnose");
   assert.match(h.calls.speak.at(-1) || "", /连接检查失败.*地址无效/);
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("native connection form creates and binds a room without plugin settings", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "", inviteCode: "", showStats: true }
+  });
+  const state = {
+    roomId: "room-1", name: "团团", stage: "初次相识", revision: 0,
+    stats: { mood: 72, energy: 76, fullness: 70, intimacy: 0 }, users: [], gifts: []
+  };
+  h.net.mock("http://127.0.0.1:4317/rooms", {
+    status: 201,
+    json: { roomId: "room-1", inviteCodes: ["PET-FIRST", "PET-PARTNER"] }
+  });
+  h.net.mock("http://127.0.0.1:4317/bind", {
+    status: 201,
+    json: { token: "token-a", roomId: "room-1", deviceId: "device-a", userId: "user-a", state }
+  });
+  await h.start();
+  await h.runCommand("connect", { nickname: "小雨", inviteCode: "" });
+  assert.equal(h.calls.secrets.get("deviceToken"), "token-a");
+  assert.deepEqual(h.calls.storage.get("localProfile"), { nickname: "小雨" });
+  assert.equal(h.calls.storage.get("partnerInvite"), "PET-PARTNER");
+  assert.equal(h.calls.netCalls.filter((call) => call.url.endsWith("/rooms")).length, 1);
+  const bindCall = h.calls.netCalls.find((call) => call.url.endsWith("/bind"));
+  assert.deepEqual(JSON.parse(bindCall?.body || "{}"), { inviteCode: "PET-FIRST", nickname: "小雨" });
+  h.net.mock("http://127.0.0.1:4317/health", { json: { ok: true } });
+  await h.runCommand("diagnose");
+  assert.match(h.calls.speak.at(-1) || "", /共享房间都连接正常/);
   h.expectNoErrors();
   await h.stop();
 });

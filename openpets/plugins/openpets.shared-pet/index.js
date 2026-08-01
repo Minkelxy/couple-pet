@@ -6,6 +6,7 @@ const IDENTITY_KEY = "identity";
 const PARTNER_INVITE_KEY = "partnerInvite";
 const TOKEN_KEY = "deviceToken";
 const SETUP_GUIDE_SEEN_KEY = "setupGuideSeen";
+const PROFILE_KEY = "localProfile";
 export const CARE_COOLDOWN_MS = 3000;
 const CARE_LABELS = { feed: "喂食", pet: "抚摸", play: "玩耍", rest: "休息" };
 export const CARE_PRESENTATIONS = {
@@ -46,10 +47,21 @@ export function setupGuideText(config, connected = false) {
   const nickname = String(config?.nickname || "").trim();
   const inviteCode = String(config?.inviteCode || "").trim();
   if (!nickname) {
-    return "一起养团团只差两步：\n1. 在 OpenPets 的插件设置里填写你的昵称\n2. 回到团团，右键选择“创建 / 连接共享房间”";
+    return "一起养团团只差一步：\n右键团团选择“创建 / 连接共享房间”，在弹出的表单里填写昵称；第一台电脑把搭档邀请码留空。";
   }
   if (inviteCode) return "昵称和搭档邀请码已经填好。右键团团，选择“创建 / 连接共享房间”即可加入。";
   return "昵称已经填好。第一台电脑把邀请码留空，右键团团选择“创建 / 连接共享房间”；创建后把团团说出的搭档邀请码发给对方。";
+}
+
+async function setupDefaults(ctx) {
+  const [config, profile] = await Promise.all([
+    ctx.config.get(),
+    ctx.storage.get(PROFILE_KEY)
+  ]);
+  return {
+    nickname: String(profile?.nickname || config.nickname || "").trim(),
+    inviteCode: String(config.inviteCode || "").trim()
+  };
 }
 
 export function careCooldownRemaining(lastAt, now = Date.now()) {
@@ -113,15 +125,15 @@ export async function updateHud(ctx, state) {
   } catch {}
 }
 
-export async function connect(ctx) {
-  const cfg = await ctx.config.get();
-  const nickname = String(cfg.nickname || "").trim();
+export async function connect(ctx, values = {}) {
+  const defaults = await setupDefaults(ctx);
+  const nickname = String(Object.hasOwn(values, "nickname") ? values.nickname : defaults.nickname).trim().slice(0, 20);
   if (!nickname) {
     await setStatus(ctx, "setup");
     await showSetupGuide(ctx);
     return null;
   }
-  let inviteCode = String(cfg.inviteCode || "").trim();
+  let inviteCode = String(Object.hasOwn(values, "inviteCode") ? values.inviteCode : defaults.inviteCode).trim().toUpperCase();
   let partnerCode = "";
   if (!inviteCode) {
     const room = await request(ctx, "/rooms", { method: "POST", body: "{}" });
@@ -133,6 +145,7 @@ export async function connect(ctx) {
     body: JSON.stringify({ inviteCode, nickname })
   });
   await ctx.secrets.set(TOKEN_KEY, result.token);
+  await ctx.storage.set(PROFILE_KEY, { nickname });
   await ctx.storage.set(IDENTITY_KEY, { userId: result.userId, deviceId: result.deviceId });
   await ctx.storage.set(PARTNER_INVITE_KEY, partnerCode);
   await ctx.storage.set(QUEUE_KEY, []);
@@ -271,7 +284,7 @@ async function handlePetClick(ctx, now = Date.now()) {
   if (!connected) {
     if (now - (lastSetupHint.get(ctx) || 0) >= 30_000) {
       lastSetupHint.set(ctx, now);
-      await ctx.pet.speak("先在插件设置中填写昵称，再选择“创建 / 连接共享房间”吧。");
+      await ctx.pet.speak("右键选择“创建 / 连接共享房间”，填写昵称就能开始啦。");
     }
     return null;
   }
@@ -281,9 +294,9 @@ async function handlePetClick(ctx, now = Date.now()) {
 }
 
 async function showSetupGuide(ctx, automatic = false) {
-  const cfg = await ctx.config.get();
+  const defaults = await setupDefaults(ctx);
   const connected = Boolean(await token(ctx));
-  const text = setupGuideText(cfg, connected);
+  const text = setupGuideText(defaults, connected);
   await ctx.ui.bubble({
     markdown: text,
     tone: connected ? "success" : "info",
@@ -297,20 +310,19 @@ async function showSetupGuide(ctx, automatic = false) {
 
 async function showInvite(ctx) {
   const code = await ctx.storage.get(PARTNER_INVITE_KEY);
-  await ctx.pet.speak(code ? `搭档邀请码：${code}` : "这里没有待使用的邀请码，请在插件设置中填写搭档发来的邀请码。");
+  await ctx.pet.speak(code ? `搭档邀请码：${code}` : "这里没有待使用的邀请码。请选择“创建 / 连接共享房间”，在表单里填写搭档发来的邀请码。");
 }
 
 async function diagnose(ctx) {
-  const cfg = await ctx.config.get();
-  if (!String(cfg.nickname || "").trim()) {
+  const connected = Boolean(await token(ctx));
+  if (!connected && !String((await setupDefaults(ctx)).nickname || "").trim()) {
     await setStatus(ctx, "setup");
-    await ctx.pet.speak("还差一步：请先在插件设置中填写你的昵称。");
+    await ctx.pet.speak("还差一步：请选择“创建 / 连接共享房间”，在表单里填写昵称。");
     return false;
   }
   try {
     const health = await request(ctx, "/health");
     if (health.ok !== true) throw new Error("服务未返回正常健康状态");
-    const connected = Boolean(await token(ctx));
     await setStatus(ctx, connected ? "online" : "setup");
     await ctx.pet.react("success", { showMessage: false });
     await ctx.pet.speak(connected ? "同步服务和共享房间都连接正常！" : "同步服务连接正常，可以创建或加入共享房间啦！");
@@ -357,7 +369,21 @@ export function register(OpenPetsPlugin) {
   OpenPetsPlugin.register({
     async start(ctx) {
       running.add(ctx);
-      await ctx.commands.register({ id: "connect", title: "$t:command.connect", description: "$t:command.connectDescription", placement: "top", featured: true }, () => connect(ctx));
+      const defaults = await setupDefaults(ctx);
+      await ctx.commands.register({
+        id: "connect",
+        title: "$t:command.connect",
+        description: "$t:command.connectDescription",
+        placement: "top",
+        featured: true,
+        form: {
+          fields: [
+            { id: "nickname", type: "text", label: "$t:form.nickname", default: defaults.nickname, maxLength: 20, required: true },
+            { id: "inviteCode", type: "text", label: "$t:form.inviteCode", default: defaults.inviteCode, maxLength: 32 }
+          ],
+          submitLabel: "$t:form.connect"
+        }
+      }, (values) => connect(ctx, values));
       for (const action of Object.keys(CARE_LABELS)) {
         await ctx.commands.register({ id: action, title: CARE_LABELS[action] }, () => care(ctx, action));
       }

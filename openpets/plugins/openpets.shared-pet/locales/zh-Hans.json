@@ -5,8 +5,8 @@
   },
   "config": {
     "serverUrl": { "label": "同步服务", "description": "地址必须匹配插件清单中声明的主机。" },
-    "nickname": { "label": "你的昵称", "description": "仅向配对的搭档显示。" },
-    "inviteCode": { "label": "搭档邀请码", "description": "第一台电脑留空以创建房间。" },
+    "nickname": { "label": "默认昵称", "description": "可选。预填到连接表单，仅向配对的搭档显示。" },
+    "inviteCode": { "label": "默认搭档邀请码", "description": "可选。预填到连接表单；第一台电脑应留空。" },
     "showStats": { "label": "显示共享状态", "description": "在宠物旁固定显示心情、体力、饱食和亲密状态。" }
   },
   "command": {
@@ -21,5 +21,12 @@
     "diagnose": "检查连接与配置",
     "diagnoseDescription": "检查昵称、同步服务地址和当前连接状态。"
   },
-  "form": { "message": "传话（最多 100 字）", "gift": "礼物", "send": "交给猫猫" }
+  "form": {
+    "nickname": "你的昵称",
+    "inviteCode": "搭档邀请码（第一台电脑留空）",
+    "connect": "开始连接",
+    "message": "传话（最多 100 字）",
+    "gift": "礼物",
+    "send": "交给猫猫"
+  }
 }
