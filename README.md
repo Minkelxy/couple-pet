@@ -79,12 +79,14 @@ npm run dev:openpets
 `deploy/` 提供 Node 服务与 Caddy HTTPS 反向代理，无第三方服务端依赖：
 
 ```powershell
-Copy-Item deploy/.env.example deploy/.env
-# 把 deploy/.env 中的域名改为实际域名，并让 DNS 指向服务器
+npm run configure:production -- pet.your-domain.com
+# 让该域名的 DNS A/AAAA 记录指向服务器后执行：
 docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 ```
 
-Caddy 自动申请 TLS 证书。共享状态保存在 Docker volume，服务默认每 6 小时备份并只保留最近 14 份。部署后必须把插件 manifest 的 `shared-pet.example.com` 和 `serverUrl` 默认值替换为实际 HTTPS 域名，再在两台 OpenPets 客户端重新批准网络权限。
+配置命令会同时生成被 Git 忽略的 `deploy/.env`、更新插件网络白名单，并把默认同步地址设为对应的 HTTPS URL；示例域名、协议、端口和非法域名会被拒绝。Caddy 自动申请 TLS 证书。共享状态保存在 Docker volume，服务默认每 6 小时备份并只保留最近 14 份。配置变化后，两台 OpenPets 客户端需要重新批准网络权限。
+
+部署完成后先访问 `https://pet.your-domain.com/health`，确认返回 `{ "ok": true }`，再在插件菜单执行“检查连接与配置”。
 
 ## 验证
 
