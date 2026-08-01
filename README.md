@@ -74,6 +74,25 @@ npm run dev:openpets
 
 启动器通过 OpenPets 官方的 `OPENPETS_DEV_PLUGIN_PATHS` 直接加载 `openpets/plugins/openpets.shared-pet`，不会被当作官方插件发布，也不再通过整目录复制触发多轮热重载。宠物包位于 `vendor/openpets/local-pets/tuan-tuan`，可使用 OpenPets CLI 从文件夹安装。
 
+## Windows 安装包
+
+Windows 交付沿用 OpenPets 官方 Electron 与 electron-builder 流程，不创建独立桌面壳。构建覆盖层会把团团设为 OpenPets 内置宠物，把 `openpets.shared-pet` 注册为随包插件并默认启用，同时保留 OpenPets 的 MIT 许可和第三方声明。
+
+正式安装包必须先配置真实 HTTPS 域名；脚本会拒绝示例域名、HTTP 地址和未列入 OpenPets 网络白名单的服务：
+
+```powershell
+npm run configure:production -- pet.your-domain.com
+npm run package:windows
+```
+
+安装程序生成在 `vendor/openpets/apps/desktop/dist-electron/`。只做本机联调时，可保留 `http://127.0.0.1:4317` 并生成可直接运行的解压目录：
+
+```powershell
+npm run package:windows:dir:local
+```
+
+OpenPets 官方 Windows 构建依赖符号链接。首次打包前需要在 Windows“设置 → 系统（或隐私和安全性）→ 开发者选项”中启用开发人员模式，或在管理员 PowerShell 中构建。构建流程会先执行官方权限检查，未满足时直接停止，不会留下一个看似成功但内容不完整的安装包。
+
 ## 云端部署
 
 `deploy/` 提供 Node 服务与 Caddy HTTPS 反向代理，无第三方服务端依赖：
