@@ -183,6 +183,56 @@ test("expected command failures stay inside the pet UI without host callback err
   await h.stop();
 });
 
+test("message and gift commands report sent, queued, rejected, and invalid input states", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "小雨", inviteCode: "", showStats: true, ambientBehavior: true }
+  });
+  const state = {
+    roomId: "room-1", name: "团团", stage: "初次相识", revision: 1,
+    stats: { mood: 72, energy: 76, fullness: 70, intimacy: 0 }, users: [], gifts: []
+  };
+  await h.start();
+  await h.ctx.secrets.set("deviceToken", "token-a");
+
+  h.net.mock("http://127.0.0.1:4317/events", { status: 201, json: { state } });
+  await h.runCommand("message", { text: "  今天早点休息  " });
+  assert.match(h.calls.speak.at(-1) || "", /传话送给搭档/);
+  assert.deepEqual(h.calls.storage.get("offlineQueue"), []);
+  const sentMessage = h.calls.netCalls.find((call) => call.url.endsWith("/events"));
+  assert.equal(JSON.parse(sentMessage?.body || "{}").payload.text, "今天早点休息");
+
+  h.net.mock("http://127.0.0.1:4317/events", { status: 503, json: { error: "暂时不可用" } });
+  await h.runCommand("gift", { gift: "毛线球" });
+  assert.match(h.calls.speak.at(-1) || "", /礼物已保存在待发送队列/);
+  assert.equal(h.calls.storage.get("offlineQueue")?.length, 1);
+
+  h.net.mock("http://127.0.0.1:4317/events", { status: 201, json: { state } });
+  await flush(h.ctx);
+  assert.deepEqual(h.calls.storage.get("offlineQueue"), []);
+
+  const callsBeforeInvalidInput = h.calls.netCalls.length;
+  await h.runCommand("message", { text: "   " });
+  assert.match(h.calls.speak.at(-1) || "", /先写一句/);
+  await h.runCommand("gift", { gift: "" });
+  assert.match(h.calls.speak.at(-1) || "", /先选择一份/);
+  assert.equal(h.calls.netCalls.length, callsBeforeInvalidInput);
+
+  h.net.mock("http://127.0.0.1:4317/events", { status: 400, json: { error: "传话格式无效" } });
+  await h.runCommand("message", { text: "会被服务拒绝" });
+  assert.match(h.calls.speak.at(-1) || "", /传话没有被同步服务接受/);
+  assert.equal(h.calls.speak.filter((text) => /有一项互动未被/.test(text)).length, 0, "user commands should receive one precise result bubble");
+  assert.deepEqual(h.calls.storage.get("offlineQueue"), []);
+  h.expectNoErrors();
+  await h.stop();
+});
+
 test("quiet companionship reacts only with silent idle and lock animations", { skip: !createTestHarness }, async () => {
   const permissions = [
     "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",

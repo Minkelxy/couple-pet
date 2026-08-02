@@ -319,15 +319,25 @@ export async function enqueue(ctx, type, payload) {
     return null;
   }
   const queue = normalizeQueue(await ctx.storage.get(QUEUE_KEY));
-  queue.push({ id: eventId(), type, payload, createdAt: Date.now() });
+  const event = { id: eventId(), type, payload, createdAt: Date.now() };
+  queue.push(event);
   await ctx.storage.set(QUEUE_KEY, queue);
-  return flush(ctx);
+  const outcome = await flush(ctx, { notifyQueue: type === "CARE" });
+  const pending = normalizeQueue(await ctx.storage.get(QUEUE_KEY)).some((item) => item.id === event.id);
+  return {
+    id: event.id,
+    pending,
+    rejected: Boolean(outcome?.rejectedIds?.includes(event.id)),
+    sessionInvalid: outcome?.sessionInvalid === true,
+    state: outcome?.state || null
+  };
 }
 
-export async function flush(ctx) {
+export async function flush(ctx, options = {}) {
   const deviceToken = await token(ctx);
   if (!deviceToken) return null;
   const queue = normalizeQueue(await ctx.storage.get(QUEUE_KEY));
+  const rejectedIds = [];
   await setStatus(ctx, queue.length ? "syncing" : "online", queue.length);
   while (queue.length) {
     try {
@@ -343,24 +353,58 @@ export async function flush(ctx) {
       if (error.status && error.status >= 400 && error.status < 500) {
         if (error.status === 401) {
           await invalidateSession(ctx);
-          return null;
+          return { state: null, rejectedIds, sessionInvalid: true };
         }
         if (error.status === 429) {
           await setStatus(ctx, "syncing", queue.length);
-          try { await ctx.pet.speak("操作有点频繁，这项互动已经保留，稍后会自动重试。"); } catch {}
-          return null;
+          if (options.notifyQueue !== false) {
+            try { await ctx.pet.speak("操作有点频繁，这项互动已经保留，稍后会自动重试。"); } catch {}
+          }
+          return { state: null, rejectedIds, retryPending: true };
         }
+        rejectedIds.push(queue[0].id);
         queue.shift();
         await ctx.storage.set(QUEUE_KEY, queue);
-        try { await ctx.pet.speak("有一项互动未被同步服务接受，已跳过并继续发送后续内容。"); } catch {}
+        if (options.notifyQueue !== false) {
+          try { await ctx.pet.speak("有一项互动未被同步服务接受，已跳过并继续发送后续内容。"); } catch {}
+        }
         continue;
       }
       await setStatus(ctx, "offline", queue.length);
-      return null;
+      return { state: null, rejectedIds, retryPending: true };
     }
   }
   await setStatus(ctx, "online");
-  return ctx.storage.get(SNAPSHOT_KEY);
+  return { state: await ctx.storage.get(SNAPSHOT_KEY), rejectedIds };
+}
+
+async function acknowledgeDelivery(ctx, kind, delivery) {
+  if (!delivery || delivery.sessionInvalid) return delivery;
+  const labels = kind === "message"
+    ? { sent: "团团已经把传话送给搭档啦！", pending: "网络暂时不可用，传话已保存在待发送队列。", rejected: "这条传话没有被同步服务接受，请修改后再试。" }
+    : { sent: "团团已经把礼物送给搭档啦！", pending: "网络暂时不可用，礼物已保存在待发送队列。", rejected: "这份礼物没有被同步服务接受，请重新选择。" };
+  const text = delivery.rejected ? labels.rejected : delivery.pending ? labels.pending : labels.sent;
+  const tone = delivery.rejected || delivery.pending ? "warning" : "success";
+  try { await ctx.pet.speak({ text, tone, durationMs: 4500 }); } catch {}
+  return delivery;
+}
+
+async function sendMessage(ctx, values = {}) {
+  const text = String(values.text || "").trim().slice(0, 100);
+  if (!text) {
+    await ctx.pet.speak("先写一句想让团团带给搭档的话吧。");
+    return null;
+  }
+  return acknowledgeDelivery(ctx, "message", await enqueue(ctx, "MESSAGE", { text }));
+}
+
+async function sendGift(ctx, values = {}) {
+  const gift = String(values.gift || "");
+  if (!GIFTS.includes(gift)) {
+    await ctx.pet.speak("请先选择一份要送给搭档的小礼物。");
+    return null;
+  }
+  return acknowledgeDelivery(ctx, "gift", await enqueue(ctx, "GIFT", { gift }));
 }
 
 export function sync(ctx) {
@@ -611,11 +655,11 @@ export function register(OpenPetsPlugin) {
       await ctx.commands.register({
         id: "message", title: "$t:command.message",
         form: { fields: [{ id: "text", type: "textarea", label: "$t:form.message", maxLength: 100, required: true }], submitLabel: "$t:form.send" }
-      }, safeCommand(ctx, "message", (values) => enqueue(ctx, "MESSAGE", { text: String(values?.text || "").slice(0, 100) })));
+      }, safeCommand(ctx, "message", (values) => sendMessage(ctx, values)));
       await ctx.commands.register({
         id: "gift", title: "$t:command.gift",
         form: { fields: [{ id: "gift", type: "select", label: "$t:form.gift", required: true, options: GIFTS.map((gift) => ({ label: gift, value: gift })) }], submitLabel: "$t:form.send" }
-      }, safeCommand(ctx, "gift", (values) => enqueue(ctx, "GIFT", { gift: String(values?.gift || "") })));
+      }, safeCommand(ctx, "gift", (values) => sendGift(ctx, values)));
       await ctx.commands.register({ id: "history", title: "$t:command.history" }, safeCommand(ctx, "history", () => showHistory(ctx)));
       await ctx.commands.register({ id: "invite", title: "$t:command.invite" }, safeCommand(ctx, "invite", () => showInvite(ctx)));
       await ctx.commands.register({ id: "guide", title: "$t:command.guide", description: "$t:command.guideDescription" }, safeCommand(ctx, "guide", () => showSetupGuide(ctx)));
