@@ -29,6 +29,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def clear_invisible_rgb(image: Image.Image) -> Image.Image:
+    """Prevent hidden chroma pixels from bleeding into scaled transparent edges."""
+    rgba = bytearray(image.convert("RGBA").tobytes())
+    for offset in range(0, len(rgba), 4):
+        if rgba[offset + 3] == 0:
+            rgba[offset] = 0
+            rgba[offset + 1] = 0
+            rgba[offset + 2] = 0
+    return Image.frombytes("RGBA", image.size, bytes(rgba))
+
+
 def main() -> None:
     args = parse_args()
     if min(args.columns, args.rows, args.frame_width, args.frame_height, args.content_size) <= 0:
@@ -91,7 +102,8 @@ def main() -> None:
         strip.alpha_composite(frame, (index * args.frame_width, 0))
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    strip.save(args.output, "WEBP", lossless=True, quality=100, method=6)
+    strip = clear_invisible_rgb(strip)
+    strip.save(args.output, "WEBP", lossless=True, quality=100, method=6, exact=True)
     print(
         f"Wrote {args.output} ({frame_count} frames, {args.frame_width}x{args.frame_height}, "
         f"minimum transparent margin {min(margins)}px)."

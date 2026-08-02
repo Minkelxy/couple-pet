@@ -3,7 +3,7 @@
   "id": "openpets.shared-pet",
   "name": "$t:plugin.name",
   "description": "$t:plugin.description",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "runtime": "javascript",
   "icon": "heart",
   "sdkVersion": "3.0.0",
@@ -30,7 +30,7 @@
   "assets": {
     "sprites": {
       "feed": {
-        "path": "assets/feed.webp",
+        "path": "assets/feed-v2.webp",
         "frameWidth": 208,
         "frameHeight": 208,
         "frames": 8,
