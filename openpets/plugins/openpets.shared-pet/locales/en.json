@@ -5,17 +5,33 @@
   },
   "config": {
     "serverUrl": { "label": "Sync server", "description": "Must match a host declared in the plugin manifest." },
-    "nickname": { "label": "Your nickname", "description": "Shown only to your paired partner." },
-    "inviteCode": { "label": "Partner invite code", "description": "Leave empty on the first computer to create a room." },
-    "showStats": { "label": "Show shared status", "description": "Pins mood, energy, fullness and bond beside the pet." }
+    "nickname": { "label": "Default nickname", "description": "Optional. Prefills the connection form and is shown only to your paired partner." },
+    "inviteCode": { "label": "Default partner invite code", "description": "Optional. Prefills the connection form; leave empty on the first computer." },
+    "showStats": { "label": "Show shared status", "description": "Pins mood, energy, fullness and bond beside the pet." },
+    "ambientBehavior": { "label": "Quiet companionship", "description": "Silently rests while the system is idle or locked; never speaks or opens a bubble, and can be disabled." }
   },
   "command": {
     "connect": "Create / connect shared room",
     "connectDescription": "Create a room when invite code is empty, otherwise join it.",
+    "disconnect": "Disconnect this computer",
+    "disconnectDescription": "Revoke this computer and clear its local shared state.",
     "message": "Send a pet message",
     "gift": "Send a small gift",
     "history": "Recent shared interactions",
-    "invite": "Show partner invite code"
+    "invite": "Show partner invite code",
+    "guide": "First-time setup guide",
+    "guideDescription": "Show the remaining pairing steps for this computer.",
+    "diagnose": "Check connection and setup",
+    "diagnoseDescription": "Check nickname, sync server address, and connection status."
   },
-  "form": { "message": "Message (up to 100 characters)", "gift": "Gift", "send": "Send with pet" }
+  "form": {
+    "nickname": "Your nickname",
+    "inviteCode": "Partner invite code (leave empty on the first computer)",
+    "connect": "Connect",
+    "disconnectConfirm": "Discard unsynced actions and disconnect this computer",
+    "disconnect": "Disconnect",
+    "message": "Message (up to 100 characters)",
+    "gift": "Gift",
+    "send": "Send with pet"
+  }
 }

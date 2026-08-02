@@ -5,17 +5,33 @@
   },
   "config": {
     "serverUrl": { "label": "同步服务", "description": "地址必须匹配插件清单中声明的主机。" },
-    "nickname": { "label": "你的昵称", "description": "仅向配对的搭档显示。" },
-    "inviteCode": { "label": "搭档邀请码", "description": "第一台电脑留空以创建房间。" },
-    "showStats": { "label": "显示共享状态", "description": "在宠物旁固定显示心情、体力、饱食和亲密状态。" }
+    "nickname": { "label": "默认昵称", "description": "可选。预填到连接表单，仅向配对的搭档显示。" },
+    "inviteCode": { "label": "默认搭档邀请码", "description": "可选。预填到连接表单；第一台电脑应留空。" },
+    "showStats": { "label": "显示共享状态", "description": "在宠物旁固定显示心情、体力、饱食和亲密状态。" },
+    "ambientBehavior": { "label": "安静陪伴", "description": "系统空闲或锁屏时让团团静默休息；不发声、不弹气泡，可随时关闭。" }
   },
   "command": {
     "connect": "创建 / 连接共享房间",
     "connectDescription": "邀请码为空时创建房间，否则加入现有房间。",
+    "disconnect": "断开当前共享房间",
+    "disconnectDescription": "撤销这台电脑的访问权限并清除本地共享状态。",
     "message": "让猫猫传话",
     "gift": "送一份小礼物",
     "history": "查看最近互动",
-    "invite": "再次显示搭档邀请码"
+    "invite": "再次显示搭档邀请码",
+    "guide": "首次使用指南",
+    "guideDescription": "查看当前还需要完成的配对步骤。",
+    "diagnose": "检查连接与配置",
+    "diagnoseDescription": "检查昵称、同步服务地址和当前连接状态。"
   },
-  "form": { "message": "传话（最多 100 字）", "gift": "礼物", "send": "交给猫猫" }
+  "form": {
+    "nickname": "你的昵称",
+    "inviteCode": "搭档邀请码（第一台电脑留空）",
+    "connect": "开始连接",
+    "disconnectConfirm": "我确认放弃尚未同步的操作，并断开这台电脑",
+    "disconnect": "确认断开",
+    "message": "传话（最多 100 字）",
+    "gift": "礼物",
+    "send": "交给猫猫"
+  }
 }

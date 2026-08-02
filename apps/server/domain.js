@@ -98,7 +98,7 @@ class PetDomain {
   }
 
   events(auth, after = 0) {
-    return auth.room.events.filter((event) => event.seq > Number(after || 0)).slice(-50);
+    return auth.room.events.filter((event) => event.seq > Number(after || 0)).slice(0, 50);
   }
 
   submit(auth, input) {

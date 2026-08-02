@@ -6,9 +6,17 @@
   "type": "module",
   "scripts": {
     "server": "node apps/server/index.js",
-    "test": "node --test apps/server/domain.test.js apps/server/http.integration.test.js openpets/plugins/openpets.shared-pet/test.js",
+    "test": "node --test apps/server/domain.test.js apps/server/http-security.test.js apps/server/http.integration.test.js apps/server/persistence.test.js openpets/plugins/openpets.shared-pet/test.js scripts/configure-production.test.mjs scripts/prepare-windows-package.test.mjs",
     "check": "node --check openpets/plugins/openpets.shared-pet/index.js && node --check apps/server/index.js",
-    "prepare:openpets": "node scripts/prepare-openpets.mjs"
+    "prepare:openpets": "node scripts/prepare-openpets.mjs",
+    "start:openpets": "node scripts/run-openpets-local.mjs",
+    "dev:openpets": "node scripts/prepare-openpets.mjs && node scripts/run-openpets-local.mjs",
+    "configure:production": "node scripts/configure-production.mjs",
+    "prepare:windows-package": "node scripts/prepare-windows-package.mjs",
+    "prepare:windows-package:local": "node scripts/prepare-windows-package.mjs --allow-local",
+    "package:windows:dir": "node scripts/prepare-windows-package.mjs && pnpm --dir vendor/openpets package:desktop:dir && node scripts/verify-windows-package.mjs",
+    "package:windows": "node scripts/prepare-windows-package.mjs && pnpm --dir vendor/openpets package:desktop && node scripts/verify-windows-package.mjs --installer",
+    "package:windows:dir:local": "node scripts/prepare-windows-package.mjs --allow-local && pnpm --dir vendor/openpets package:desktop:dir && node scripts/verify-windows-package.mjs"
   },
   "engines": { "node": ">=20" }
 }
