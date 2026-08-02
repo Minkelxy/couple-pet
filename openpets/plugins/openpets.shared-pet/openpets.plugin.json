@@ -3,7 +3,7 @@
   "id": "openpets.shared-pet",
   "name": "$t:plugin.name",
   "description": "$t:plugin.description",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "runtime": "javascript",
   "icon": "heart",
   "sdkVersion": "3.0.0",

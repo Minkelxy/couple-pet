@@ -23,6 +23,7 @@ const lastClickFeedback = new WeakMap();
 const lastClickSubmit = new WeakMap();
 const lastSetupHint = new WeakMap();
 const lastCareSubmit = new WeakMap();
+const syncInFlight = new WeakMap();
 
 const eventId = () => `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
 const parse = (response) => response.json ?? JSON.parse(response.text || "{}");
@@ -269,10 +270,24 @@ export async function flush(ctx) {
   return ctx.storage.get(SNAPSHOT_KEY);
 }
 
-export async function sync(ctx) {
+export function sync(ctx) {
+  const active = syncInFlight.get(ctx);
+  if (active) return active;
+  const current = performSync(ctx).finally(() => {
+    if (syncInFlight.get(ctx) === current) syncInFlight.delete(ctx);
+  });
+  syncInFlight.set(ctx, current);
+  return current;
+}
+
+async function performSync(ctx) {
   const deviceToken = await token(ctx);
   if (!deviceToken) return null;
   await flush(ctx);
+  if (!await token(ctx)) {
+    await setStatus(ctx, "setup");
+    return null;
+  }
   try {
     const cursor = Number(await ctx.storage.get(CURSOR_KEY) || 0);
     const [state, feed] = await Promise.all([
@@ -295,6 +310,23 @@ export async function sync(ctx) {
     await setStatus(ctx, "offline", queue.length);
     return null;
   }
+}
+
+async function handleOffline(ctx) {
+  if (!await token(ctx)) {
+    await setStatus(ctx, "setup");
+    return;
+  }
+  const queue = normalizeQueue(await ctx.storage.get(QUEUE_KEY));
+  await setStatus(ctx, "offline", queue.length);
+}
+
+async function handleRecovery(ctx) {
+  if (!await token(ctx)) {
+    await setStatus(ctx, "setup");
+    return null;
+  }
+  return sync(ctx);
 }
 
 async function presentPartnerEvents(ctx, events) {
@@ -478,6 +510,14 @@ export function register(OpenPetsPlugin) {
         ctx.events.on("pet:clicked", async () => {
           try { await handlePetClick(ctx); } catch {}
         });
+        ctx.events.on("offline", async () => {
+          try { await handleOffline(ctx); } catch {}
+        });
+        for (const event of ["online", "screen:unlocked"]) {
+          ctx.events.on(event, async () => {
+            try { await handleRecovery(ctx); } catch {}
+          });
+        }
       } catch {}
       const snapshot = await ctx.storage.get(SNAPSHOT_KEY);
       if (snapshot) await updateHud(ctx, snapshot);

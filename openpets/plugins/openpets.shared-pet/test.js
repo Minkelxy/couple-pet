@@ -232,9 +232,69 @@ test("offline recovery presents every partner message before advancing the curso
     { seq: 2, type: "MESSAGE", actorId: "user-b", actorName: "阿岚", payload: { text: "第二条" } },
     { seq: 3, type: "CARE", actorId: "user-a", actorName: "小雨", payload: { action: "pet" } }
   ] } });
-  await sync(h.ctx);
+  await h.emit("offline", {});
+  assert.match(h.calls.status.at(-1)?.text || "", /离线/);
+  assert.equal(h.calls.netCalls.length, 0, "offline notification must not make a doomed request");
+  await h.emit("online", {});
   assert.ok(h.calls.bubbles.some((bubble) => bubble.spec.text?.includes("第一条") && bubble.spec.text?.includes("第二条")));
   assert.equal(h.calls.storage.get("eventCursor"), 3);
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("revoked token during queue flush returns to setup without stale follow-up requests", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "小雨", inviteCode: "", showStats: true }
+  });
+  await h.start();
+  await h.ctx.secrets.set("deviceToken", "revoked-token");
+  await h.ctx.storage.set("offlineQueue", [{
+    id: "queued_event_401", type: "CARE", payload: { action: "pet" }, createdAt: Date.now()
+  }]);
+  h.net.mock("http://127.0.0.1:4317/events", { status: 401, json: { error: "设备令牌已撤销" } });
+  await sync(h.ctx);
+  assert.equal(h.calls.secrets.has("deviceToken"), false);
+  assert.equal(h.calls.netCalls.filter((call) => call.url.endsWith("/events")).length, 1);
+  assert.equal(h.calls.netCalls.some((call) => call.url.endsWith("/snapshot") || call.url.includes("/events?after=")), false);
+  assert.match(h.calls.status.at(-1)?.text || "", /待配置/);
+  assert.match(h.calls.speak.at(-1) || "", /绑定已失效/);
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("poll, online, and unlock sync triggers share one in-flight request", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "小雨", inviteCode: "", showStats: true }
+  });
+  await h.start();
+  await h.ctx.secrets.set("deviceToken", "token-a");
+  await h.ctx.storage.set("identity", { userId: "user-a", deviceId: "device-a" });
+  const state = {
+    roomId: "room-1", name: "团团", stage: "初次相识", revision: 1,
+    stats: { mood: 72, energy: 76, fullness: 70, intimacy: 0 }, users: [], gifts: []
+  };
+  h.net.mock("http://127.0.0.1:4317/snapshot", { json: state });
+  h.net.mock("http://127.0.0.1:4317/events?after=0", { json: { events: [
+    { seq: 1, type: "MESSAGE", actorId: "user-b", actorName: "阿岚", payload: { text: "只显示一次" } }
+  ] } });
+  await Promise.all([sync(h.ctx), h.emit("online", {}), h.emit("screen:unlocked", {})]);
+  assert.equal(h.calls.netCalls.filter((call) => call.url.endsWith("/snapshot")).length, 1);
+  assert.equal(h.calls.netCalls.filter((call) => call.url.includes("/events?after=")).length, 1);
+  assert.equal(h.calls.bubbles.filter((bubble) => bubble.spec.text?.includes("只显示一次")).length, 1);
   h.expectNoErrors();
   await h.stop();
 });
