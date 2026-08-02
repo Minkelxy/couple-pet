@@ -25,6 +25,8 @@ const lastClickSubmit = new WeakMap();
 const lastSetupHint = new WeakMap();
 const lastCareSubmit = new WeakMap();
 const syncInFlight = new WeakMap();
+const presenceState = new WeakMap();
+const careAnimationUntil = new WeakMap();
 
 const eventId = () => `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
 const parse = (response) => response.json ?? JSON.parse(response.text || "{}");
@@ -106,6 +108,7 @@ export function careCooldownRemaining(lastAt, now = Date.now()) {
 async function playCareAnimation(ctx, action) {
   const presentation = CARE_PRESENTATIONS[action];
   if (!presentation) return;
+  careAnimationUntil.set(ctx, Date.now() + (presentation.durationMs || 3500));
   try { await ctx.schedule.cancel(CARE_ANIMATION_RESET_ID); } catch {}
   if (presentation.sprite) {
     try {
@@ -115,6 +118,7 @@ async function playCareAnimation(ctx, action) {
         fps: presentation.fps
       });
       await ctx.schedule.once(CARE_ANIMATION_RESET_ID, presentation.durationMs, async () => {
+        careAnimationUntil.delete(ctx);
         try { await ctx.pet.setAnimation("idle"); } catch {}
       });
       return;
@@ -134,6 +138,52 @@ async function request(ctx, path, options = {}, token = null) {
   const data = parse(response);
   if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { status: response.status });
   return data;
+}
+
+function commandFailureText(action, error) {
+  const status = Number(error?.status || 0);
+  if (status === 429) return "操作有点频繁，稍等一会儿再试吧。";
+  if (action === "connect" && [400, 404, 409].includes(status)) return "没有连接成功，请检查昵称和邀请码后再试。";
+  if (action === "history") return "暂时取不到互动记录，团团会保留现有连接，请稍后再试。";
+  if (action === "disconnect") return "暂时无法安全断开，本机连接和待发送内容都已保留。";
+  return "这次操作暂时没有完成，团团已经保留可恢复的数据，请稍后再试。";
+}
+
+async function invalidateSession(ctx) {
+  const hadToken = Boolean(await token(ctx));
+  await clearLocalSession(ctx);
+  if (hadToken) {
+    try { await ctx.pet.speak("设备绑定已失效，请重新连接共享房间。"); } catch {}
+  }
+}
+
+async function handleCommandFailure(ctx, action, error) {
+  const status = Number(error?.status || 0);
+  if (status === 401) {
+    await invalidateSession(ctx);
+  } else {
+    const connected = Boolean(await token(ctx));
+    await setStatus(ctx, connected ? "offline" : "setup", normalizeQueue(await ctx.storage.get(QUEUE_KEY)).length);
+    try { await ctx.pet.speak({ text: commandFailureText(action, error), tone: "warning", durationMs: 5000 }); } catch {}
+  }
+  try {
+    await ctx.log.warn("Shared pet command recovered without host failure.", {
+      action,
+      status,
+      category: status ? "http" : "unavailable"
+    });
+  } catch {}
+  return null;
+}
+
+function safeCommand(ctx, action, handler) {
+  return async (values) => {
+    try { return await handler(values); }
+    catch (error) {
+      try { return await handleCommandFailure(ctx, action, error); }
+      catch { return null; }
+    }
+  };
 }
 
 async function token(ctx) {
@@ -183,6 +233,10 @@ export async function updateHud(ctx, state) {
 }
 
 export async function connect(ctx, values = {}) {
+  if (await token(ctx)) {
+    await ctx.pet.speak("这台电脑已经连接共享房间。如需更换，请先选择“断开当前共享房间”。");
+    return null;
+  }
   const defaults = await setupDefaults(ctx);
   const nickname = String(Object.hasOwn(values, "nickname") ? values.nickname : defaults.nickname).trim().slice(0, 20);
   if (!nickname) {
@@ -216,8 +270,8 @@ export async function connect(ctx, values = {}) {
 }
 
 async function clearLocalSession(ctx) {
-  await ctx.secrets.delete(TOKEN_KEY);
-  await Promise.all([
+  try { await ctx.secrets.delete(TOKEN_KEY); } catch {}
+  await Promise.allSettled([
     ctx.storage.delete(IDENTITY_KEY),
     ctx.storage.delete(PARTNER_INVITE_KEY),
     ctx.storage.delete(QUEUE_KEY),
@@ -226,6 +280,7 @@ async function clearLocalSession(ctx) {
   ]);
   lastCareSubmit.delete(ctx);
   lastClickSubmit.delete(ctx);
+  careAnimationUntil.delete(ctx);
   try { await ctx.schedule.cancel(CARE_ANIMATION_RESET_ID); } catch {}
   try { await ctx.pet.setAnimation("idle"); } catch {}
   await updateHud(ctx, null);
@@ -286,13 +341,18 @@ export async function flush(ctx) {
       await updateHud(ctx, result.state);
     } catch (error) {
       if (error.status && error.status >= 400 && error.status < 500) {
-        queue.shift();
-        await ctx.storage.set(QUEUE_KEY, queue);
         if (error.status === 401) {
-          try { await ctx.secrets.delete(TOKEN_KEY); } catch {}
-          await ctx.pet.speak("设备绑定已失效，请重新连接共享房间。");
+          await invalidateSession(ctx);
           return null;
         }
+        if (error.status === 429) {
+          await setStatus(ctx, "syncing", queue.length);
+          try { await ctx.pet.speak("操作有点频繁，这项互动已经保留，稍后会自动重试。"); } catch {}
+          return null;
+        }
+        queue.shift();
+        await ctx.storage.set(QUEUE_KEY, queue);
+        try { await ctx.pet.speak("有一项互动未被同步服务接受，已跳过并继续发送后续内容。"); } catch {}
         continue;
       }
       await setStatus(ctx, "offline", queue.length);
@@ -338,7 +398,11 @@ async function performSync(ctx) {
     }
     await setStatus(ctx, "online");
     return state;
-  } catch {
+  } catch (error) {
+    if (error?.status === 401) {
+      await invalidateSession(ctx);
+      return null;
+    }
     const queue = normalizeQueue(await ctx.storage.get(QUEUE_KEY));
     await setStatus(ctx, "offline", queue.length);
     return null;
@@ -360,6 +424,22 @@ async function handleRecovery(ctx) {
     return null;
   }
   return sync(ctx);
+}
+
+async function handlePresence(ctx, event) {
+  const current = presenceState.get(ctx) || { idle: false, locked: false };
+  const next = {
+    idle: event === "idle:enter" ? true : event === "idle:exit" ? false : current.idle,
+    locked: event === "screen:locked" ? true : event === "screen:unlocked" ? false : current.locked
+  };
+  presenceState.set(ctx, next);
+  const config = await ctx.config.get();
+  if (config.ambientBehavior === false || Date.now() < (careAnimationUntil.get(ctx) || 0)) return;
+  if (next.locked || next.idle) {
+    await ctx.pet.react("waiting", { showMessage: false });
+    return;
+  }
+  if (event === "idle:exit" || event === "screen:unlocked") await ctx.pet.setAnimation("idle");
 }
 
 async function presentPartnerEvents(ctx, events) {
@@ -513,7 +593,7 @@ export function register(OpenPetsPlugin) {
           ],
           submitLabel: "$t:form.connect"
         }
-      }, (values) => connect(ctx, values));
+      }, safeCommand(ctx, "connect", (values) => connect(ctx, values)));
       await ctx.commands.register({
         id: "disconnect",
         title: "$t:command.disconnect",
@@ -524,22 +604,22 @@ export function register(OpenPetsPlugin) {
           ],
           submitLabel: "$t:form.disconnect"
         }
-      }, (values) => disconnect(ctx, values));
+      }, safeCommand(ctx, "disconnect", (values) => disconnect(ctx, values)));
       for (const action of Object.keys(CARE_LABELS)) {
-        await ctx.commands.register({ id: action, title: CARE_LABELS[action] }, () => care(ctx, action));
+        await ctx.commands.register({ id: action, title: CARE_LABELS[action] }, safeCommand(ctx, action, () => care(ctx, action)));
       }
       await ctx.commands.register({
         id: "message", title: "$t:command.message",
         form: { fields: [{ id: "text", type: "textarea", label: "$t:form.message", maxLength: 100, required: true }], submitLabel: "$t:form.send" }
-      }, (values) => enqueue(ctx, "MESSAGE", { text: String(values?.text || "").slice(0, 100) }));
+      }, safeCommand(ctx, "message", (values) => enqueue(ctx, "MESSAGE", { text: String(values?.text || "").slice(0, 100) })));
       await ctx.commands.register({
         id: "gift", title: "$t:command.gift",
         form: { fields: [{ id: "gift", type: "select", label: "$t:form.gift", required: true, options: GIFTS.map((gift) => ({ label: gift, value: gift })) }], submitLabel: "$t:form.send" }
-      }, (values) => enqueue(ctx, "GIFT", { gift: String(values?.gift || "") }));
-      await ctx.commands.register({ id: "history", title: "$t:command.history" }, () => showHistory(ctx));
-      await ctx.commands.register({ id: "invite", title: "$t:command.invite" }, () => showInvite(ctx));
-      await ctx.commands.register({ id: "guide", title: "$t:command.guide", description: "$t:command.guideDescription" }, () => showSetupGuide(ctx));
-      await ctx.commands.register({ id: "diagnose", title: "$t:command.diagnose", description: "$t:command.diagnoseDescription" }, () => diagnose(ctx));
+      }, safeCommand(ctx, "gift", (values) => enqueue(ctx, "GIFT", { gift: String(values?.gift || "") })));
+      await ctx.commands.register({ id: "history", title: "$t:command.history" }, safeCommand(ctx, "history", () => showHistory(ctx)));
+      await ctx.commands.register({ id: "invite", title: "$t:command.invite" }, safeCommand(ctx, "invite", () => showInvite(ctx)));
+      await ctx.commands.register({ id: "guide", title: "$t:command.guide", description: "$t:command.guideDescription" }, safeCommand(ctx, "guide", () => showSetupGuide(ctx)));
+      await ctx.commands.register({ id: "diagnose", title: "$t:command.diagnose", description: "$t:command.diagnoseDescription" }, safeCommand(ctx, "diagnose", () => diagnose(ctx)));
       try {
         ctx.events.on("pet:clicked", async () => {
           try { await handlePetClick(ctx); } catch {}
@@ -547,9 +627,17 @@ export function register(OpenPetsPlugin) {
         ctx.events.on("offline", async () => {
           try { await handleOffline(ctx); } catch {}
         });
+        for (const event of ["idle:enter", "idle:exit", "screen:locked"]) {
+          ctx.events.on(event, async () => {
+            try { await handlePresence(ctx, event); } catch {}
+          });
+        }
         for (const event of ["online", "screen:unlocked"]) {
           ctx.events.on(event, async () => {
-            try { await handleRecovery(ctx); } catch {}
+            try {
+              if (event === "screen:unlocked") await handlePresence(ctx, event);
+              await handleRecovery(ctx);
+            } catch {}
           });
         }
       } catch {}
@@ -569,6 +657,8 @@ export function register(OpenPetsPlugin) {
       running.delete(ctx);
       try { await ctx.schedule.cancel(POLL_ID); } catch {}
       try { await ctx.schedule.cancel(CARE_ANIMATION_RESET_ID); } catch {}
+      presenceState.delete(ctx);
+      careAnimationUntil.delete(ctx);
       const handle = pinned.get(ctx);
       if (handle) { try { await handle.dismiss(); } catch {} }
       pinned.delete(ctx);

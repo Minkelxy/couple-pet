@@ -12,6 +12,7 @@ import {
   register,
   setupGuideText,
   sync,
+  flush,
   POLL_ID
 } from "./index.js";
 
@@ -138,6 +139,75 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   await h.setConfig({ serverUrl: "not-a-url", nickname: "小雨", inviteCode: "", showStats: true });
   await h.runCommand("diagnose");
   assert.match(h.calls.speak.at(-1) || "", /连接检查失败.*地址无效/);
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("expected command failures stay inside the pet UI without host callback errors", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "小雨", inviteCode: "", showStats: true, ambientBehavior: true }
+  });
+  await h.start();
+  h.net.mock("http://127.0.0.1:4317/rooms", { status: 503, json: { error: "暂时不可用" } });
+  await h.runCommand("connect", { nickname: "小雨", inviteCode: "" });
+  assert.equal(h.calls.secrets.has("deviceToken"), false);
+  assert.match(h.calls.speak.at(-1) || "", /暂时没有完成/);
+  assert.match(h.calls.status.at(-1)?.text || "", /待配置/);
+
+  await h.ctx.secrets.set("deviceToken", "token-a");
+  await h.ctx.storage.set("identity", { userId: "user-a", deviceId: "device-a" });
+  const callsBeforeReconnect = h.calls.netCalls.length;
+  await h.runCommand("connect", { nickname: "小雨", inviteCode: "" });
+  assert.equal(h.calls.netCalls.length, callsBeforeReconnect, "an active session must not be overwritten by accidental reconnect");
+  assert.match(h.calls.speak.at(-1) || "", /先选择.*断开当前共享房间/);
+
+  h.net.mock("http://127.0.0.1:4317/events?after=0", { status: 503, json: { error: "暂时不可用" } });
+  await h.runCommand("history");
+  assert.equal(h.calls.secrets.get("deviceToken"), "token-a", "transient history failure must preserve the session");
+  assert.match(h.calls.speak.at(-1) || "", /暂时取不到互动记录/);
+
+  h.net.mock("http://127.0.0.1:4317/events?after=0", { status: 401, json: { error: "设备令牌已撤销" } });
+  await h.runCommand("history");
+  assert.equal(h.calls.secrets.has("deviceToken"), false);
+  assert.equal(h.calls.storage.has("identity"), false);
+  assert.match(h.calls.status.at(-1)?.text || "", /待配置/);
+  assert.match(h.calls.speak.at(-1) || "", /绑定已失效/);
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("quiet companionship reacts only with silent idle and lock animations", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "", inviteCode: "", showStats: true, ambientBehavior: true }
+  });
+  await h.start();
+  const bubbleCount = h.calls.bubbles.length;
+  const speechCount = h.calls.speak.length;
+  await h.emit("idle:enter", { idleSeconds: 300 });
+  assert.deepEqual(h.calls.reactions.at(-1), { reaction: "waiting", options: { showMessage: false } });
+  assert.equal(h.calls.bubbles.length, bubbleCount, "ambient behavior must not open a bubble");
+  assert.equal(h.calls.speak.length, speechCount, "ambient behavior must not speak");
+  await h.emit("idle:exit", { idleSeconds: 301 });
+  assert.equal(h.calls.react.at(-1), "idle");
+
+  await h.setConfig({ serverUrl: "http://127.0.0.1:4317", nickname: "", inviteCode: "", showStats: true, ambientBehavior: false });
+  const reactionsBeforeDisabledLock = h.calls.reactions.length;
+  await h.emit("screen:locked", {});
+  assert.equal(h.calls.reactions.length, reactionsBeforeDisabledLock, "disabled ambient behavior must stay inert");
   h.expectNoErrors();
   await h.stop();
 });
@@ -293,6 +363,58 @@ test("revoked token during queue flush returns to setup without stale follow-up 
   assert.equal(h.calls.secrets.has("deviceToken"), false);
   assert.equal(h.calls.netCalls.filter((call) => call.url.endsWith("/events")).length, 1);
   assert.equal(h.calls.netCalls.some((call) => call.url.endsWith("/snapshot") || call.url.includes("/events?after=")), false);
+  assert.match(h.calls.status.at(-1)?.text || "", /待配置/);
+  assert.match(h.calls.speak.at(-1) || "", /绑定已失效/);
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("rate-limited queued care stays pending for automatic retry", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "小雨", inviteCode: "", showStats: true, ambientBehavior: true }
+  });
+  await h.start();
+  await h.ctx.secrets.set("deviceToken", "token-a");
+  const queued = { id: "queued_rate_limited_care", type: "CARE", payload: { action: "feed" }, createdAt: Date.now() };
+  await h.ctx.storage.set("offlineQueue", [queued]);
+  h.net.mock("http://127.0.0.1:4317/events", { status: 429, json: { error: "慢一点" } });
+  await flush(h.ctx);
+  assert.deepEqual(h.calls.storage.get("offlineQueue"), [queued]);
+  assert.match(h.calls.status.at(-1)?.text || "", /同步中/);
+  assert.match(h.calls.speak.at(-1) || "", /已经保留.*自动重试/);
+  assert.equal(h.calls.secrets.get("deviceToken"), "token-a");
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("revoked token during snapshot sync clears stale local session state", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "小雨", inviteCode: "", showStats: true, ambientBehavior: true }
+  });
+  await h.start();
+  await h.ctx.secrets.set("deviceToken", "revoked-token");
+  await h.ctx.storage.set("identity", { userId: "user-a", deviceId: "device-a" });
+  await h.ctx.storage.set("snapshot", { roomId: "room-old" });
+  await h.ctx.storage.set("eventCursor", 9);
+  h.net.mock("http://127.0.0.1:4317/snapshot", { status: 401, json: { error: "设备令牌已撤销" } });
+  h.net.mock("http://127.0.0.1:4317/events?after=9", { json: { events: [] } });
+  await sync(h.ctx);
+  assert.equal(h.calls.secrets.has("deviceToken"), false);
+  for (const key of ["identity", "snapshot", "eventCursor"]) assert.equal(h.calls.storage.has(key), false);
   assert.match(h.calls.status.at(-1)?.text || "", /待配置/);
   assert.match(h.calls.speak.at(-1) || "", /绑定已失效/);
   h.expectNoErrors();

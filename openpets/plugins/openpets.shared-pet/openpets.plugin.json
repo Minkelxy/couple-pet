@@ -3,7 +3,7 @@
   "id": "openpets.shared-pet",
   "name": "$t:plugin.name",
   "description": "$t:plugin.description",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "runtime": "javascript",
   "icon": "heart",
   "sdkVersion": "3.0.0",
@@ -62,6 +62,12 @@
       "default": true,
       "label": "$t:config.showStats.label",
       "description": "$t:config.showStats.description"
+    },
+    "ambientBehavior": {
+      "type": "boolean",
+      "default": true,
+      "label": "$t:config.ambientBehavior.label",
+      "description": "$t:config.ambientBehavior.description"
     }
   }
 }

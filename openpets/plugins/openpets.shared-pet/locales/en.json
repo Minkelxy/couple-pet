@@ -7,7 +7,8 @@
     "serverUrl": { "label": "Sync server", "description": "Must match a host declared in the plugin manifest." },
     "nickname": { "label": "Default nickname", "description": "Optional. Prefills the connection form and is shown only to your paired partner." },
     "inviteCode": { "label": "Default partner invite code", "description": "Optional. Prefills the connection form; leave empty on the first computer." },
-    "showStats": { "label": "Show shared status", "description": "Pins mood, energy, fullness and bond beside the pet." }
+    "showStats": { "label": "Show shared status", "description": "Pins mood, energy, fullness and bond beside the pet." },
+    "ambientBehavior": { "label": "Quiet companionship", "description": "Silently rests while the system is idle or locked; never speaks or opens a bubble, and can be disabled." }
   },
   "command": {
     "connect": "Create / connect shared room",
