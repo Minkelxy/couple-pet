@@ -9,6 +9,7 @@ const SETUP_GUIDE_SEEN_KEY = "setupGuideSeen";
 const PROFILE_KEY = "localProfile";
 const CARE_ANIMATION_RESET_ID = "shared-pet-care-animation-reset";
 export const CARE_COOLDOWN_MS = 3000;
+export const AMBIENT_MARKDOWN_LIMIT = 900;
 const CARE_LABELS = { feed: "喂食", pet: "抚摸", play: "玩耍", rest: "休息" };
 export const CARE_PRESENTATIONS = {
   feed: { reaction: "success", sprite: "feed", fps: 5, durationMs: 1800, text: "开饭啦！", icon: "food", tone: "success" },
@@ -27,6 +28,38 @@ const syncInFlight = new WeakMap();
 
 const eventId = () => `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
 const parse = (response) => response.json ?? JSON.parse(response.text || "{}");
+const unsafeAmbientPattern = /```|<script|function\s+\w+\s*\(|\b(?:import|export)\s|https?:\/\/|www\.|api[_-]?key|secret|password|BEGIN [A-Z ]+PRIVATE KEY/i;
+
+function ambientPart(value, fallback) {
+  const text = String(value || "").replace(/[\0-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim();
+  return text && !unsafeAmbientPattern.test(text) ? text : fallback;
+}
+
+export function partnerNoticePages(events, limit = AMBIENT_MARKDOWN_LIMIT) {
+  const lines = [];
+  for (const event of Array.isArray(events) ? events : []) {
+    const actor = ambientPart(event?.actorName, "搭档");
+    if (event?.type === "MESSAGE") {
+      lines.push(`${actor}：${ambientPart(event?.payload?.text, "发来一条受桌面安全规则保护的内容")}`);
+    } else if (event?.type === "GIFT") {
+      lines.push(`${actor}送来了${ambientPart(event?.payload?.gift, "一份礼物")}！`);
+    }
+  }
+  const pages = [];
+  let page = "";
+  for (const line of lines) {
+    const safeLine = line.slice(0, Math.max(1, limit));
+    const next = page ? `${page}\n${safeLine}` : safeLine;
+    if (page && next.length > limit) {
+      pages.push(page);
+      page = safeLine;
+    } else {
+      page = next;
+    }
+  }
+  if (page) pages.push(page);
+  return pages;
+}
 
 export function normalizeUrl(value) {
   const raw = String(value || "http://127.0.0.1:4317").trim();
@@ -331,15 +364,13 @@ async function handleRecovery(ctx) {
 
 async function presentPartnerEvents(ctx, events) {
   if (!events.length) return;
-  const notices = [];
-  for (const event of events) {
-    if (event.type === "MESSAGE") notices.push(`${event.actorName}：${event.payload.text}`);
-    else if (event.type === "GIFT") notices.push(`${event.actorName}送来了${event.payload.gift}！`);
-  }
-  if (notices.length) {
+  const pages = partnerNoticePages(events);
+  if (pages.length) {
     const hasMessage = events.some((event) => event.type === "MESSAGE");
     await ctx.pet.react(hasMessage ? "waving" : "celebrating", { showMessage: false });
-    await ctx.ui.bubble({ text: notices.join("\n"), sticky: notices.length > 1, tone: "info" });
+    for (const markdown of pages) {
+      await ctx.ui.bubble({ markdown, sticky: true, tone: "info", dismissOn: ["click", "petClick"] });
+    }
     return;
   }
   const latestCare = events.filter((event) => event.type === "CARE").at(-1);
@@ -440,12 +471,15 @@ async function showHistory(ctx) {
   const cursor = Number(await ctx.storage.get(CURSOR_KEY) || 0);
   const feed = await request(ctx, `/events?after=${Math.max(0, cursor - 50)}`, {}, deviceToken);
   const lines = (feed.events || []).slice(-8).reverse().map((event) => {
-    if (event.type === "CARE") return `${event.actorName} · ${CARE_LABELS[event.payload.action] || "照顾"}`;
-    if (event.type === "MESSAGE") return `${event.actorName} · 传话`;
-    if (event.type === "GIFT") return `${event.actorName} · 送来${event.payload.gift}`;
-    return `${event.actorName} · ${event.type}`;
+    const actor = ambientPart(event.actorName, "搭档");
+    if (event.type === "CARE") return `${actor} · ${CARE_LABELS[event.payload.action] || "照顾"}`;
+    if (event.type === "MESSAGE") return `${actor} · 传话`;
+    if (event.type === "GIFT") return `${actor} · 送来${ambientPart(event.payload.gift, "一份礼物")}`;
+    return `${actor} · ${ambientPart(event.type, "互动")}`;
   });
-  await ctx.ui.bubble({ text: lines.length ? lines.join("\n") : "还没有互动记录。", sticky: true, tone: "info" });
+  await ctx.ui.bubble(lines.length
+    ? { markdown: lines.join("\n"), sticky: true, tone: "info", dismissOn: ["click", "petClick"] }
+    : { text: "还没有互动记录。", sticky: true, tone: "info" });
 }
 
 async function scheduleNextSync(ctx) {

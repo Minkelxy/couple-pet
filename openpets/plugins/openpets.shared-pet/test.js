@@ -4,9 +4,11 @@ import { readFile } from "node:fs/promises";
 import {
   CARE_COOLDOWN_MS,
   CARE_PRESENTATIONS,
+  AMBIENT_MARKDOWN_LIMIT,
   careCooldownRemaining,
   normalizeQueue,
   normalizeUrl,
+  partnerNoticePages,
   register,
   setupGuideText,
   sync,
@@ -51,6 +53,22 @@ test("care presentations are distinct and use the server's three-second cooldown
   assert.equal(CARE_PRESENTATIONS.rest.reaction, "waiting");
   assert.equal(CARE_PRESENTATIONS.feed.sprite, "feed");
   assert.equal(CARE_PRESENTATIONS.feed.fps, 5);
+});
+
+test("partner notices use bounded multiline markdown and screen unsafe content", () => {
+  const events = Array.from({ length: 50 }, (_, index) => ({
+    type: "MESSAGE",
+    actorName: index === 0 ? "https://unsafe.example" : "阿岚",
+    payload: { text: index === 1 ? "第一行\n第二行" : index === 2 ? "password: 123" : `第 ${index + 1} 条 ${"喵".repeat(80)}` }
+  }));
+  const pages = partnerNoticePages(events);
+  assert.ok(pages.length > 1);
+  assert.ok(pages.length <= 7, "one 50-event server page must fit within OpenPets's eight active-bubble quota alongside the HUD");
+  assert.ok(pages.every((page) => page.length <= AMBIENT_MARKDOWN_LIMIT));
+  assert.ok(pages.every((page) => !/https?:\/\/|password/i.test(page)));
+  assert.match(pages.join("\n"), /搭档：/);
+  assert.match(pages.join("\n"), /第一行 第二行/);
+  assert.match(pages.join("\n"), /受桌面安全规则保护/);
 });
 
 test("feed sprite uses the square strip contract required by the OpenPets override renderer", async () => {
@@ -204,6 +222,15 @@ test("native connection form creates and binds a room without plugin settings", 
   h.net.mock("http://127.0.0.1:4317/health", { json: { ok: true } });
   await h.runCommand("diagnose");
   assert.match(h.calls.speak.at(-1) || "", /共享房间都连接正常/);
+  h.net.mock("http://127.0.0.1:4317/events?after=0", { json: { events: [
+    { seq: 1, type: "CARE", actorId: "user-a", actorName: "小雨", payload: { action: "feed" } },
+    { seq: 2, type: "MESSAGE", actorId: "user-b", actorName: "阿岚", payload: { text: "晚安" } }
+  ] } });
+  await h.runCommand("history");
+  const history = h.calls.bubbles.at(-1)?.spec;
+  assert.match(history?.markdown || "", /阿岚 · 传话/);
+  assert.match(history?.markdown || "", /小雨 · 喂食/);
+  assert.equal(history?.text, undefined, "multiline history must not use OpenPets's single-line text field");
   h.expectNoErrors();
   await h.stop();
 });
@@ -236,7 +263,10 @@ test("offline recovery presents every partner message before advancing the curso
   assert.match(h.calls.status.at(-1)?.text || "", /离线/);
   assert.equal(h.calls.netCalls.length, 0, "offline notification must not make a doomed request");
   await h.emit("online", {});
-  assert.ok(h.calls.bubbles.some((bubble) => bubble.spec.text?.includes("第一条") && bubble.spec.text?.includes("第二条")));
+  const recovered = h.calls.bubbles.find((bubble) => bubble.spec.markdown?.includes("第一条") && bubble.spec.markdown?.includes("第二条"));
+  assert.ok(recovered, "recovered messages should use the OpenPets multiline markdown contract");
+  assert.equal(recovered.spec.text, undefined);
+  assert.deepEqual(recovered.spec.dismissOn, ["click", "petClick"]);
   assert.equal(h.calls.storage.get("eventCursor"), 3);
   h.expectNoErrors();
   await h.stop();
@@ -294,7 +324,7 @@ test("poll, online, and unlock sync triggers share one in-flight request", { ski
   await Promise.all([sync(h.ctx), h.emit("online", {}), h.emit("screen:unlocked", {})]);
   assert.equal(h.calls.netCalls.filter((call) => call.url.endsWith("/snapshot")).length, 1);
   assert.equal(h.calls.netCalls.filter((call) => call.url.includes("/events?after=")).length, 1);
-  assert.equal(h.calls.bubbles.filter((bubble) => bubble.spec.text?.includes("只显示一次")).length, 1);
+  assert.equal(h.calls.bubbles.filter((bubble) => bubble.spec.markdown?.includes("只显示一次")).length, 1);
   h.expectNoErrors();
   await h.stop();
 });

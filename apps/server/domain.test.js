@@ -41,3 +41,20 @@ test("messages are validated and stay in the private event stream", () => {
   assert.equal(domain.events(b)[0].payload.text, "今晚早点休息呀");
   assert.throws(() => domain.submit(a, { id: "message_event_02", type: "MESSAGE", payload: { text: "x".repeat(101) } }));
 });
+
+test("offline event pages preserve oldest-first order without skipping", () => {
+  const { domain, a, b } = pair();
+  for (let index = 1; index <= 60; index += 1) {
+    domain.submit(a, {
+      id: `message_page_${String(index).padStart(3, "0")}`,
+      type: "MESSAGE",
+      payload: { text: `第 ${index} 条` }
+    });
+  }
+  const firstPage = domain.events(b, 0);
+  assert.equal(firstPage.length, 50);
+  assert.deepEqual(firstPage.map((event) => event.seq), Array.from({ length: 50 }, (_, index) => index + 1));
+  const secondPage = domain.events(b, firstPage.at(-1).seq);
+  assert.equal(secondPage.length, 10);
+  assert.deepEqual(secondPage.map((event) => event.seq), Array.from({ length: 10 }, (_, index) => index + 51));
+});
