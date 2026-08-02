@@ -12,6 +12,8 @@
   "command": {
     "connect": "创建 / 连接共享房间",
     "connectDescription": "邀请码为空时创建房间，否则加入现有房间。",
+    "disconnect": "断开当前共享房间",
+    "disconnectDescription": "撤销这台电脑的访问权限并清除本地共享状态。",
     "message": "让猫猫传话",
     "gift": "送一份小礼物",
     "history": "查看最近互动",
@@ -25,6 +27,8 @@
     "nickname": "你的昵称",
     "inviteCode": "搭档邀请码（第一台电脑留空）",
     "connect": "开始连接",
+    "disconnectConfirm": "我确认放弃尚未同步的操作，并断开这台电脑",
+    "disconnect": "确认断开",
     "message": "传话（最多 100 字）",
     "gift": "礼物",
     "send": "交给猫猫"

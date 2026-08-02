@@ -12,6 +12,8 @@
   "command": {
     "connect": "Create / connect shared room",
     "connectDescription": "Create a room when invite code is empty, otherwise join it.",
+    "disconnect": "Disconnect this computer",
+    "disconnectDescription": "Revoke this computer and clear its local shared state.",
     "message": "Send a pet message",
     "gift": "Send a small gift",
     "history": "Recent shared interactions",
@@ -25,6 +27,8 @@
     "nickname": "Your nickname",
     "inviteCode": "Partner invite code (leave empty on the first computer)",
     "connect": "Connect",
+    "disconnectConfirm": "Discard unsynced actions and disconnect this computer",
+    "disconnect": "Disconnect",
     "message": "Message (up to 100 characters)",
     "gift": "Gift",
     "send": "Send with pet"

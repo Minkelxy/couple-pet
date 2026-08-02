@@ -181,6 +181,48 @@ export async function connect(ctx, values = {}) {
   return result;
 }
 
+async function clearLocalSession(ctx) {
+  await ctx.secrets.delete(TOKEN_KEY);
+  await Promise.all([
+    ctx.storage.delete(IDENTITY_KEY),
+    ctx.storage.delete(PARTNER_INVITE_KEY),
+    ctx.storage.delete(QUEUE_KEY),
+    ctx.storage.delete(SNAPSHOT_KEY),
+    ctx.storage.delete(CURSOR_KEY)
+  ]);
+  lastCareSubmit.delete(ctx);
+  lastClickSubmit.delete(ctx);
+  try { await ctx.schedule.cancel(CARE_ANIMATION_RESET_ID); } catch {}
+  try { await ctx.pet.setAnimation("idle"); } catch {}
+  await updateHud(ctx, null);
+  await setStatus(ctx, "setup");
+}
+
+export async function disconnect(ctx, values = {}) {
+  if (values.confirm !== true) {
+    await ctx.pet.speak("没有执行断开。请勾选确认后再提交。");
+    return false;
+  }
+  const deviceToken = await token(ctx);
+  if (!deviceToken) {
+    await setStatus(ctx, "setup");
+    await ctx.pet.speak("这台电脑当前没有连接共享房间。");
+    return true;
+  }
+  try {
+    await request(ctx, "/revoke", { method: "POST", body: "{}" }, deviceToken);
+  } catch (error) {
+    if (error?.status !== 401) {
+      await setStatus(ctx, "offline", normalizeQueue(await ctx.storage.get(QUEUE_KEY)).length);
+      await ctx.pet.speak(`断开失败：${error instanceof Error ? error.message : "无法访问同步服务"}。本机连接仍然保留。`);
+      return false;
+    }
+  }
+  await clearLocalSession(ctx);
+  await ctx.pet.speak("已经安全断开这台电脑。需要时可重新创建或加入共享房间。");
+  return true;
+}
+
 export async function enqueue(ctx, type, payload) {
   if (!await token(ctx)) {
     await setStatus(ctx, "setup");
@@ -406,6 +448,17 @@ export function register(OpenPetsPlugin) {
           submitLabel: "$t:form.connect"
         }
       }, (values) => connect(ctx, values));
+      await ctx.commands.register({
+        id: "disconnect",
+        title: "$t:command.disconnect",
+        description: "$t:command.disconnectDescription",
+        form: {
+          fields: [
+            { id: "confirm", type: "boolean", label: "$t:form.disconnectConfirm", default: false, required: true }
+          ],
+          submitLabel: "$t:form.disconnect"
+        }
+      }, (values) => disconnect(ctx, values));
       for (const action of Object.keys(CARE_LABELS)) {
         await ctx.commands.register({ id: action, title: CARE_LABELS[action] }, () => care(ctx, action));
       }

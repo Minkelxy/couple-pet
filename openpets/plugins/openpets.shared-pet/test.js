@@ -90,6 +90,7 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   });
   await h.start();
   assert.ok(h.calls.commands.has("connect"));
+  assert.ok(h.calls.commands.has("disconnect"));
   const connectForm = h.calls.commands.get("connect")?.meta.form;
   assert.deepEqual(connectForm?.fields.map((field) => field.id), ["nickname", "inviteCode"]);
   assert.equal(connectForm?.fields[0]?.default, "小雨");
@@ -119,6 +120,52 @@ test("registers against the real OpenPets SDK v3 harness", { skip: !createTestHa
   await h.setConfig({ serverUrl: "not-a-url", nickname: "小雨", inviteCode: "", showStats: true });
   await h.runCommand("diagnose");
   assert.match(h.calls.speak.at(-1) || "", /连接检查失败.*地址无效/);
+  h.expectNoErrors();
+  await h.stop();
+});
+
+test("disconnect requires confirmation, preserves recovery on failure, and clears a revoked session", { skip: !createTestHarness }, async () => {
+  const permissions = [
+    "pet:speak", "pet:interact", "pet:pin", "pet:reaction", "pet:animate", "schedule", "storage",
+    "secrets", "commands", "events", "network", "network:write", "network:local", "status"
+  ];
+  const en = JSON.parse(await readFile(new URL("./locales/en.json", import.meta.url), "utf8"));
+  const h = createTestHarness(register, {
+    permissions,
+    locales: { en },
+    config: { serverUrl: "http://127.0.0.1:4317", nickname: "", inviteCode: "", showStats: true }
+  });
+  await h.start();
+  await h.ctx.secrets.set("deviceToken", "token-a");
+  await h.ctx.storage.set("localProfile", { nickname: "小雨" });
+  await h.ctx.storage.set("identity", { userId: "user-a", deviceId: "device-a" });
+  await h.ctx.storage.set("partnerInvite", "PET-PARTNER");
+  await h.ctx.storage.set("offlineQueue", [{ id: "queued_event", type: "CARE", payload: { action: "feed" } }]);
+  await h.ctx.storage.set("snapshot", { roomId: "room-1" });
+  await h.ctx.storage.set("eventCursor", 4);
+
+  await h.runCommand("disconnect", { confirm: false });
+  assert.equal(h.calls.secrets.get("deviceToken"), "token-a");
+  assert.equal(h.calls.netCalls.length, 0);
+
+  h.net.mock("http://127.0.0.1:4317/revoke", { status: 503, json: { error: "暂时不可用" } });
+  await h.runCommand("disconnect", { confirm: true });
+  assert.equal(h.calls.secrets.get("deviceToken"), "token-a", "failed revocation must keep the recoverable session");
+  assert.equal(h.calls.storage.has("offlineQueue"), true);
+  assert.match(h.calls.speak.at(-1) || "", /本机连接仍然保留/);
+
+  h.net.mock("http://127.0.0.1:4317/revoke", { status: 200, json: { ok: true } });
+  await h.runCommand("disconnect", { confirm: true });
+  assert.equal(h.calls.secrets.has("deviceToken"), false);
+  for (const key of ["identity", "partnerInvite", "offlineQueue", "snapshot", "eventCursor"]) {
+    assert.equal(h.calls.storage.has(key), false, `${key} should be cleared after revocation`);
+  }
+  assert.deepEqual(h.calls.storage.get("localProfile"), { nickname: "小雨" }, "nickname remains available for the next pairing form");
+  const revokeCalls = h.calls.netCalls.filter((call) => call.url.endsWith("/revoke"));
+  assert.equal(revokeCalls.length, 2);
+  assert.equal(revokeCalls.at(-1)?.headers?.authorization, "Bearer token-a");
+  assert.match(h.calls.status.at(-1)?.text || "", /待配置/);
+  assert.match(h.calls.speak.at(-1) || "", /已经安全断开/);
   h.expectNoErrors();
   await h.stop();
 });
