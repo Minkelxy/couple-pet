@@ -3,17 +3,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { PetDomain, initialDb } = require("./domain");
 const { FixedWindowRateLimiter, clientAddress } = require("./http-security");
+const { createBackup, loadDatabase, saveDatabase } = require("./persistence");
 
 const port = Number(process.env.PORT || 4317);
 const host = process.env.HOST || "127.0.0.1";
 const dataFile = process.env.PET_DATA_FILE || path.join(process.cwd(), "data", "shared-pet.json");
 const backupDir = process.env.PET_BACKUP_DIR || path.join(path.dirname(dataFile), "backups");
 fs.mkdirSync(path.dirname(dataFile), { recursive: true });
-let db = initialDb();
-try { db = JSON.parse(fs.readFileSync(dataFile, "utf8")); } catch {}
-const domain = new PetDomain(db);
-const limiter = new FixedWindowRateLimiter();
-let saveTimer;
 const audit = (action, fields = {}) => console.log(JSON.stringify({
   timestamp: new Date().toISOString(),
   level: "info",
@@ -21,26 +17,32 @@ const audit = (action, fields = {}) => console.log(JSON.stringify({
   action,
   ...fields
 }));
+let loaded;
+try {
+  loaded = loadDatabase(dataFile, backupDir, initialDb);
+  if (loaded.recovered) saveDatabase(dataFile, loaded.db);
+  audit("database.loaded", { source: loaded.source, recovered: loaded.recovered });
+} catch {
+  console.error(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    level: "error",
+    component: "shared-pet",
+    action: "database.unavailable"
+  }));
+  process.exit(1);
+}
+const db = loaded.db;
+const domain = new PetDomain(db);
+const limiter = new FixedWindowRateLimiter();
+let saveTimer;
 const saveNow = () => {
   clearTimeout(saveTimer);
-  const temp = `${dataFile}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(db, null, 2));
-  try {
-    fs.renameSync(temp, dataFile);
-  } catch (error) {
-    if (!["EEXIST", "EPERM"].includes(error.code)) throw error;
-    fs.rmSync(dataFile, { force: true });
-    fs.renameSync(temp, dataFile);
-  }
+  saveDatabase(dataFile, db);
 };
 const save = () => { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 20); };
 const backup = () => {
   if (!fs.existsSync(dataFile)) return;
-  fs.mkdirSync(backupDir, { recursive: true });
-  const stamp = new Date().toISOString().replaceAll(":", "-").replace(/\.\d{3}Z$/, "Z");
-  fs.copyFileSync(dataFile, path.join(backupDir, `shared-pet-${stamp}.json`));
-  const files = fs.readdirSync(backupDir).filter((name) => /^shared-pet-.*\.json$/.test(name)).sort().reverse();
-  for (const name of files.slice(14)) fs.rmSync(path.join(backupDir, name), { force: true });
+  createBackup(dataFile, backupDir);
 };
 setInterval(backup, Number(process.env.PET_BACKUP_INTERVAL_MS || 21_600_000)).unref();
 

@@ -119,16 +119,18 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up -d --build
 
 配置命令会同时生成被 Git 忽略的 `deploy/.env`、更新插件网络白名单，并把默认同步地址设为对应的 HTTPS URL；示例域名、协议、端口和非法域名会被拒绝。Caddy 自动申请 TLS 证书。共享状态保存在 Docker volume，服务默认每 6 小时备份并只保留最近 14 份。配置变化后，两台 OpenPets 客户端需要重新批准网络权限。
 
+数据库启动时会校验顶层结构和每个房间的关键字段。主文件损坏或在 Windows 替换过程中断时，服务依次尝试 `.previous` 回滚副本和从新到旧的有效备份，并在监听端口前恢复主文件；如果磁盘上已有数据但所有副本都无效，服务会拒绝启动，而不是用空数据库覆盖。保存流程先持久化临时文件，再保留旧主文件直到新文件替换成功；定时备份也拒绝复制无效快照。
+
 部署完成后先访问 `https://pet.your-domain.com/health`，确认返回 `{ "ok": true }`，再在插件菜单执行“检查连接与配置”。
 
 ## 验证
 
 ```powershell
-node --test apps/server/domain.test.js apps/server/http.integration.test.js openpets/plugins/openpets.shared-pet/test.js
+node --test apps/server/domain.test.js apps/server/http.integration.test.js apps/server/persistence.test.js openpets/plugins/openpets.shared-pet/test.js
 node --check openpets/plugins/openpets.shared-pet/index.js
 ```
 
-服务端测试覆盖双设备配对、幂等事件、双方参与奖励、私有传话和超过 50 条事件时的有序分页；插件测试同时覆盖离线队列、原生配对表单、安全多行气泡、命令故障恢复、传话/礼物送达确认、限流重试、静默陪伴、照顾冷却与专属进食精灵调度。正式插件目录还会通过 OpenPets 官方校验器检查资源声明、尺寸和文件边界。
+服务端测试覆盖双设备配对、幂等事件、双方参与奖励、私有传话、超过 50 条事件时的有序分页，以及主文件损坏、备份恢复和 Windows 替换回滚；插件测试同时覆盖离线队列、原生配对表单、安全多行气泡、命令故障恢复、传话/礼物送达确认、限流重试、静默陪伴、照顾冷却与专属进食精灵调度。正式插件目录还会通过 OpenPets 官方校验器检查资源声明、尺寸和文件边界。
 
 ## 生产边界
 
