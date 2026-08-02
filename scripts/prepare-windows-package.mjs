@@ -71,6 +71,26 @@ export function patchBuiltInPetSource(source) {
   return source.replace(/displayName:\s*"(?:Professor Hoot|团团)"/, 'displayName: "团团"');
 }
 
+export function patchPetPreloadSource(source) {
+  if (source.includes("const transitions = override.loop === false")) return source;
+  const fpsLine = '    const fps = Math.min(30, Math.max(1, Number(override.fps) || 8));';
+  const styleLine = '    el.style.cssText = `position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:${frame}px;height:${frame}px;background-image:url("${override.fileUrl.replace(/"/g, "%22")}");background-repeat:no-repeat;background-size:${probe.naturalWidth}px ${frame}px;animation:plugin-sprite-frames ${(frames / fps).toFixed(3)}s steps(${frames}) ${override.loop === false ? "1" : "infinite"};pointer-events:none;`;';
+  const keyframesLine = '    style.textContent = `@keyframes plugin-sprite-frames { from { background-position: 0 0; } to { background-position: -${frames * frame}px 0; } }`;';
+  if (!source.includes(fpsLine) || !source.includes(styleLine) || !source.includes(keyframesLine)) {
+    throw new Error("OpenPets 自定义精灵播放契约已变化，无法安全修复非循环末帧。");
+  }
+  const timingLines = [
+    fpsLine,
+    "    const transitions = override.loop === false ? Math.max(1, frames - 1) : frames;",
+    "    const travel = override.loop === false ? Math.max(0, frames - 1) * frame : frames * frame;",
+    "    const duration = override.loop === false ? transitions / fps : frames / fps;",
+  ].join("\n");
+  return source
+    .replace(fpsLine, timingLines)
+    .replace(styleLine, '    el.style.cssText = `position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:${frame}px;height:${frame}px;background-image:url("${override.fileUrl.replace(/"/g, "%22")}");background-repeat:no-repeat;background-size:${probe.naturalWidth}px ${frame}px;animation:plugin-sprite-frames ${duration.toFixed(3)}s steps(${transitions}) ${override.loop === false ? "1 forwards" : "infinite"};pointer-events:none;`;')
+    .replace(keyframesLine, '    style.textContent = `@keyframes plugin-sprite-frames { from { background-position: 0 0; } to { background-position: -${travel}px 0; } }`;');
+}
+
 export async function hashTree(root) {
   const hash = createHash("sha256");
   const files = await listFiles(root);
@@ -102,14 +122,16 @@ async function prepareWindowsPackage({ allowLocal }) {
   const targetSprite = join(desktopRoot, "assets", "default-pet-spritesheet.webp");
   const pluginServicePath = join(desktopRoot, "src", "plugin-service.ts");
   const builtInPetPath = join(desktopRoot, "src", "built-in-pet.ts");
+  const petPreloadPath = join(desktopRoot, "pet-preload.cjs");
   const manifestPath = join(sourcePlugin, "openpets.plugin.json");
   const upstreamPackagePath = join(vendorRoot, "package.json");
 
-  const [manifest, upstreamPackage, pluginService, builtInPet] = await Promise.all([
+  const [manifest, upstreamPackage, pluginService, builtInPet, petPreload] = await Promise.all([
     readJson(manifestPath),
     readJson(upstreamPackagePath),
     readFile(pluginServicePath, "utf8"),
     readFile(builtInPetPath, "utf8"),
+    readFile(petPreloadPath, "utf8"),
   ]);
   if (upstreamPackage.name !== "openpets-v2-workspace" || !/^3\./.test(upstreamPackage.version ?? "")) {
     throw new Error("当前 vendor/openpets 不是已验证的 OpenPets 3.x 工作区。");
@@ -121,6 +143,7 @@ async function prepareWindowsPackage({ allowLocal }) {
   await cp(sourceSprite, targetSprite);
   await writeFile(pluginServicePath, patchPluginServiceSource(pluginService), "utf8");
   await writeFile(builtInPetPath, patchBuiltInPetSource(builtInPet), "utf8");
+  await writeFile(petPreloadPath, patchPetPreloadSource(petPreload), "utf8");
 
   const legalDir = join(desktopRoot, "assets", "legal");
   await mkdir(legalDir, { recursive: true });

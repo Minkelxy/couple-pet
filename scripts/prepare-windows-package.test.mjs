@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   patchBuiltInPetSource,
+  patchPetPreloadSource,
   patchPluginServiceSource,
   validateReleaseManifest,
 } from "./prepare-windows-package.mjs";
@@ -48,4 +49,19 @@ test("OpenPets overlay renames only the known built-in pet contract", () => {
     'export const builtInPet = { displayName: "团团" };',
   );
   assert.throws(() => patchBuiltInPetSource('displayName: "Unknown"'), /契约已变化/);
+});
+
+test("OpenPets overlay holds the final frame of one-shot plugin sprites", () => {
+  const source = [
+    '    const fps = Math.min(30, Math.max(1, Number(override.fps) || 8));',
+    '    el.style.cssText = `position:absolute;left:50%;bottom:0;transform:translateX(-50%);width:${frame}px;height:${frame}px;background-image:url("${override.fileUrl.replace(/"/g, "%22")}");background-repeat:no-repeat;background-size:${probe.naturalWidth}px ${frame}px;animation:plugin-sprite-frames ${(frames / fps).toFixed(3)}s steps(${frames}) ${override.loop === false ? "1" : "infinite"};pointer-events:none;`;',
+    '    style.textContent = `@keyframes plugin-sprite-frames { from { background-position: 0 0; } to { background-position: -${frames * frame}px 0; } }`;',
+  ].join("\n");
+  const once = patchPetPreloadSource(source);
+  assert.match(once, /frames - 1/);
+  assert.match(once, /steps\(\$\{transitions\}\)/);
+  assert.match(once, /1 forwards/);
+  assert.match(once, /-\$\{travel\}px/);
+  assert.equal(patchPetPreloadSource(once), once);
+  assert.throws(() => patchPetPreloadSource("unknown preload"), /播放契约已变化/);
 });

@@ -77,6 +77,8 @@ test("feed sprite uses the square strip contract required by the OpenPets overri
   const declaration = manifest.assets.sprites.feed;
   assert.equal(declaration.frameWidth, declaration.frameHeight);
   assert.equal(declaration.frames, 8);
+  assert.equal(declaration.durationMs, declaration.frames / CARE_PRESENTATIONS.feed.fps * 1000);
+  assert.ok(CARE_PRESENTATIONS.feed.durationMs > declaration.durationMs, "the final frame must remain visible before returning to idle");
   const bytes = await readFile(new URL(`./${declaration.path}`, import.meta.url));
   const chunk = bytes.indexOf(Buffer.from("VP8L"));
   assert.notEqual(chunk, -1, "feed sprite must be a lossless WebP");
